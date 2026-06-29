@@ -1,38 +1,120 @@
 # WiRe
 
-WiRe = Wireless Redstone control for ComputerCraft / CC:Tweaked.
+**WiRe (Wireless Redstone)** is a wireless device management and automation system for **ComputerCraft / CC:Tweaked**.
 
-This repository is the new modular home for WiRe. The current working server is kept as `server/main.lua` so existing clients/devices keep using the known working discovery, encryption, setup and registration flow.
+WiRe allows players to discover, register and control wireless redstone devices from one or more central servers. Devices can be organised into groups, controlled manually through WiRe Client or automatically through WiRe Trigger.
 
-## Install
+WiRe is designed to be completely generic. It can control anything that can be operated by a redstone signal, including (but not limited to):
 
-Once this repo is uploaded to GitHub under:
+- Doors
+- Lighting
+- Machines
+- Rail switches
+- Farms
+- Security systems
+- Elevators
+- Any other redstone-controlled mechanism
+
+---
+
+## Original Project
+
+The original **WiRe** project was created by **Dog (HydrantHunter)**.
+
+This repository is the **WiRe Development Project**, which continues development while preserving credit to the original author.
+
+---
+
+# Installation
+
+Install the latest development version directly from GitHub:
 
 ```text
-https://github.com/Atty29/WiRe
-```
-
-ComputerCraft users can install using the installer file from Pastebin, or directly with:
-
-```lua
 wget run https://raw.githubusercontent.com/Atty29/WiRe/main/installer/install.lua
 ```
 
-## Current packages
+The installer currently supports:
 
-- `server` - working WiRe Server+ monolith from the current stable file.
-- `client` - placeholder for future client package.
-- `trigger` - placeholder for future WiRe Trigger package.
-- `tablet` - placeholder for future tablet package.
-- `shared` - shared libraries for future modular WiRe.
+- WiRe Server
+- WiRe Client
+- WiRe Trigger
 
-## Important
+Tablet support will be added in a future release.
 
-Do not rewrite the working server network layer unless you are intentionally making a breaking protocol update. Existing devices depend on the old discovery/encryption/registration path.
+---
 
-## Roadmap
+# Current Repository Structure
 
-- v2.1: search/sort/header UI patch to the working server.
-- v2.2: optional PIN lock and panic lock security layer.
-- v2.3: tablet remote access.
-- v3.0: proper modular server split after the monolith is safely mapped.
+```
+server/
+    WiRe Server
+
+client/
+    WiRe Client
+
+trigger/
+    WiRe Trigger
+
+shared/
+    Shared libraries
+
+installer/
+    GitHub installer
+
+docs/
+    Project documentation
+```
+
+---
+
+# Development Status
+
+Current Version
+
+```
+0.1.0-dev
+```
+
+Current Features
+
+- GitHub installer
+- WiRe Server
+- WiRe Client
+- WiRe Trigger
+- Existing WiRe compatibility
+
+---
+
+# Roadmap
+
+## v0.2
+
+- Search
+- Device Sorting
+- Updated Server Interface
+
+## v0.3
+
+- Security System
+- PIN Lock
+- Panic Lock
+
+## v0.4
+
+- Tablet Support
+
+## v1.0
+
+- First Stable Release
+
+---
+
+# Development Philosophy
+
+The WiRe Development Project follows a few simple principles:
+
+- Keep WiRe generic.
+- Preserve compatibility wherever practical.
+- Improve through small, tested changes.
+- Build for long-term maintainability.
+- Credit the original project and continue its development respectfully.
