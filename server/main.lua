@@ -1,12 +1,22 @@
---[[    WiRe Server    ]]--
---[[      by Dog       ]]--
---[[ aka HydrantHunter ]]--
---[[  Wi = Wireless    ]]--
---[[  Re = Redstone    ]]--
---[[ pastebin hqpRw4Jy ]]--
---[[ WiRe Server+ Community Edition ]]--
---[[ Original WiRe by Dog / HydrantHunter ]]--
---[[ Community feature expansion: paging, groups, group manager ]]--
+--==============================================================--
+--                          WiRe Server                         --
+--==============================================================--
+-- Original WiRe created by Dog (HydrantHunter)                 --
+-- Wi = Wireless | Re = Redstone                               --
+-- Original Release: Pastebin hqpRw4Jy                          --
+--                                                              --
+-- WiRe Development Edition                                     --
+-- Extensively redesigned and expanded by the WiRe Project.     --
+--                                                              --
+-- Features include:                                            --
+--  • Enhanced Device Management                                --
+--  • Device Groups                                              --
+--  • Group Management                                           --
+--  • Search & Sorting                                           --
+--  • Security System                                            --
+--  • Tablet Support (Planned)                                   --
+--  • Ongoing Community Development                              --
+--==============================================================--
 local WiReSver = "3.0.2 Community Manager"
 --[[
 Tested with/requires:
