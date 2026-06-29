@@ -47,11 +47,15 @@ local pageNum, numPages, modemCount = 1, 1, 0
 local monCols, monRows, monSlotW, monSlotH, monFirstY = 20, 5, 8, 5, 3
 local monSlots = monCols * monRows
 local viewMode, groupPage = "DEVICES", 1
+local searchText, sortAZ, visibleClients = "", true, { }
+local terminalLocked, pinBuffer, failedPinAttempts = false, "", 0
 local uiButtons, groupButtonSlots = { }, { }
 local ccSuccess, kernelState, ccUpdate, help = false, false, false, false
 local uiModalActive = false --# True while using terminal group setup screens; prevents client updates redrawing over instructions.
 local network, client, thisCommand, pollTimer, mon, monX, monY, monSide, monControls, termScreenStatic, updateScreens, netReceive
 local activateGroup, sendCommandToClient, drawMainScreen, loadGroups, saveGroups
+local ensureSecurityDefaults, runSecurityResponse, drawLockScreen, handlePinAction, readSecurityPinPrompt, securityResponsesMenu
+local findClientByName, buildGroupFromMonitor
 --# Terminal Colors
 local white = colors.white
 local black = colors.black
@@ -130,6 +134,7 @@ local validStates = {
   init = { myellow, yellow, "" };
   Noise = { mred, red, "" };
   GROUP = { mcyan, cyan, "" };
+  PANIC = { mred, red, "" };
 }
 
 --# WiRe Server+ GROUP CONFIGURATION
@@ -1267,16 +1272,27 @@ end
 
 local function drawTopTabs()
   uiButtons = { }
-  mon.setBackgroundColor(msky)
-  mon.setTextColor(mblack)
+  local headerBg = (colorBurst[ccSettings.color] and colorBurst[ccSettings.color][2]) or mgray
+  local headerFg = (colorBurst[ccSettings.color] and colorBurst[ccSettings.color][3]) or mwhite
+
+  mon.setBackgroundColor(headerBg)
+  mon.setTextColor(headerFg)
   mon.setCursorPos(1, 1)
   mon.write(string.rep(" ", monX))
-  local title = ccSettings.name .. " [" .. ccSettings.color .. "]"
-  mon.setCursorPos(math.max(1, math.floor((monX - #title) / 2)), 1)
-  mon.write(title)
+
   local x = 2
   x = drawButton(x, 1, "DEVICES", "VIEW_DEVICES", viewMode == "DEVICES" and mgreen or mgray, mwhite)
   x = drawButton(x, 1, "GROUPS", "VIEW_GROUPS", viewMode == "GROUPS" and mgreen or mgray, mwhite)
+  x = drawButton(x, 1, "SETTINGS", "VIEW_SETTINGS", viewMode == "SETTINGS" and mgreen or mgray, mwhite)
+
+  local title = ccSettings.name .. "  -  " .. ccSettings.color
+  local titleX = math.max(x + 1, math.floor((monX - #title) / 2))
+  if titleX + #title - 1 <= monX then
+    mon.setCursorPos(titleX, 1)
+    mon.setBackgroundColor(headerBg)
+    mon.setTextColor(headerFg)
+    mon.write(title)
+  end
 end
 
 local function drawBottomBar()
@@ -1285,12 +1301,73 @@ local function drawBottomBar()
   mon.setTextColor(mwhite)
   mon.setCursorPos(1, y)
   mon.write(string.rep(" ", monX))
-  local x = 2
-  x = drawButton(x, y, "ADD GROUP", "ADD_GROUP", mblue, mwhite)
-  x = drawButton(x, y, "EDIT GROUP", "EDIT_GROUP", mblue, mwhite)
-  x = drawButton(x, y, "DEL GROUP", "DEL_GROUP", mred, mwhite)
-  x = drawButton(x + 2, y, "< PAGE", "PAGE_PREV", mgray, mwhite)
-  x = drawButton(x, y, "PAGE >", "PAGE_NEXT", mgray, mwhite)
+
+  --# Global panic button. Hidden unless enabled in settings.
+  local panicEnabled = ccSettings.security and ccSettings.security.panicLockEnabled
+  if panicEnabled and monX >= 14 then
+    drawButton(math.max(1, monX - 13), y, "PANIC LOCK", "PANIC_LOCK", mred, mwhite)
+  end
+
+  if viewMode == "GROUPS" then
+    local x = 2
+    x = drawButton(x, y, "ADD GROUP", "ADD_GROUP", mblue, mwhite)
+    x = drawButton(x, y, "EDIT GROUP", "EDIT_GROUP", mblue, mwhite)
+    x = drawButton(x, y, "DEL GROUP", "DEL_GROUP", mred, mwhite)
+  elseif viewMode == "SETTINGS" then
+    local x = 2
+    local sec = ccSettings.security or { }
+    x = drawButton(x, y, sec.pinEnabled and "PIN ON" or "PIN OFF", "SEC_TOGGLE_PIN", sec.pinEnabled and mgreen or mgray, mwhite)
+    x = drawButton(x, y, "SET PIN", "SEC_SET_PIN", mblue, mwhite)
+    x = drawButton(x, y, sec.panicLockEnabled and "PANIC ON" or "PANIC OFF", "SEC_TOGGLE_PANIC", sec.panicLockEnabled and mred or mgray, mwhite)
+    x = drawButton(x, y, "RESPONSES", "SEC_RESPONSES", mblue, mwhite)
+    if sec.pinEnabled then x = drawButton(x, y, "LOCK NOW", "LOCK_NOW", mred, mwhite) end
+  elseif viewMode == "DEVICES" then
+    local x = 2
+    local searchLabel = searchText == "" and "SEARCH" or ("SEARCH:" .. searchText)
+    x = drawButton(x, y, searchLabel:sub(1, 18), "SEARCH", mblue, mwhite)
+    x = drawButton(x, y, sortAZ and "SORT A-Z" or "SORT OFF", "SORT_TOGGLE", mblue, mwhite)
+    if searchText ~= "" then x = drawButton(x, y, "CLEAR", "SEARCH_CLEAR", mred, mwhite) end
+  end
+
+  local pageLabel
+  if viewMode == "SETTINGS" then
+    pageLabel = "SETTINGS"
+  elseif viewMode == "GROUPS" then
+    local groupPages = math.max(1, math.ceil(#sortedGroupNames() / monSlots))
+    pageLabel = "GROUPS " .. tostring(groupPage) .. "/" .. tostring(groupPages)
+  else
+    pageLabel = "DEVICES " .. tostring(pageNum) .. "/" .. tostring(numPages)
+  end
+  local mid = math.max(1, math.floor((monX - #pageLabel) / 2))
+  mon.setCursorPos(mid, y)
+  mon.setBackgroundColor(mgray)
+  mon.setTextColor(mwhite)
+  mon.write(pageLabel)
+
+  local nextEnd = panicEnabled and (monX - 16) or monX
+  local nextX = math.max(1, nextEnd - 8)
+  local prevX = math.max(1, nextX - 11)
+  drawButton(prevX, y, "<< PREV", "PAGE_PREV", mgray, mwhite)
+  drawButton(nextX, y, "NEXT >>", "PAGE_NEXT", mgray, mwhite)
+end
+
+local function rebuildVisibleClients()
+  visibleClients = { }
+  local s = string.lower(searchText or "")
+  for i = 1, #allClients do
+    local c = allClients[i]
+    local hay = string.lower(tostring(c.name or "") .. " " .. tostring(c.cc or ""))
+    if s == "" or string.find(hay, s, 1, true) then
+      visibleClients[#visibleClients + 1] = { client = c, quiet = quietClients[i], realIndex = i }
+    end
+  end
+  if sortAZ then
+    table.sort(visibleClients, function(a, b)
+      return tostring(a.client.name or "") < tostring(b.client.name or "")
+    end)
+  end
+  numPages = math.max(1, math.ceil(#visibleClients / monSlots))
+  pageNum = math.min(math.max(1, pageNum), numPages)
 end
 
 do
@@ -1319,22 +1396,30 @@ do
   end
 
   local function drawDevicesScreen()
+    rebuildVisibleClients()
     if #allClients == 0 then
       mon.setTextColor(mred)
       mon.setBackgroundColor(mblack)
       mon.setCursorPos(4, 4)
       mon.write("No clients are currently connected")
+    elseif #visibleClients == 0 then
+      mon.setTextColor(myellow)
+      mon.setBackgroundColor(mblack)
+      mon.setCursorPos(4, 4)
+      mon.write("No devices match search: " .. tostring(searchText))
     else
       local firstName, lastName, xPos, yPos, devState, lockState
       local startIndex = ((pageNum - 1) * monSlots) + 1
-      local endIndex = math.min(startIndex + monSlots - 1, #allClients)
+      local endIndex = math.min(startIndex + monSlots - 1, #visibleClients)
       for i = startIndex, endIndex do
         local displayIndex = i - startIndex + 1
+        local entry = visibleClients[i]
+        local c = entry.client
         xPos, yPos = getGridSlotPos(displayIndex)
-        firstName, lastName = splitName(allClients[i].name)
-        devState, lockState = allClients[i].deviceState, allClients[i].lockState
+        firstName, lastName = splitName(c.name)
+        devState, lockState = c.deviceState, c.lockState
         mon.setBackgroundColor(mblack)
-        mon.setTextColor(quietClients[i] and myellow or msky)
+        mon.setTextColor(entry.quiet and myellow or msky)
         mon.setCursorPos(xPos, yPos)
         mon.write(firstName .. string.rep(" ", math.max(0, 6 - #firstName)))
         mon.setCursorPos(xPos, yPos + 1)
@@ -1349,6 +1434,10 @@ do
       mon.setTextColor(msilver)
       mon.setCursorPos(math.max(1, monX - 10), 2)
       mon.write("P" .. tostring(pageNum) .. "/" .. tostring(numPages))
+      if searchText ~= "" then
+        mon.setCursorPos(2, 2)
+        mon.write("Search: " .. tostring(searchText):sub(1, math.max(1, monX - 12)))
+      end
     end
   end
 
@@ -1394,16 +1483,237 @@ do
     end
   end
 
+  local function drawSettingsScreen()
+    ensureSecurityDefaults()
+    local sec = ccSettings.security
+    mon.setBackgroundColor(mblack)
+    mon.setTextColor(mwhite)
+    mon.setCursorPos(4, 4)
+    mon.write("WiRe Server Protection")
+    mon.setTextColor(msilver)
+    mon.setCursorPos(4, 6)
+    mon.write("PIN lock: " .. (sec.pinEnabled and "Enabled" or "Disabled"))
+    mon.setCursorPos(4, 7)
+    mon.write("Panic lock button: " .. (sec.panicLockEnabled and "Enabled" or "Disabled"))
+    mon.setCursorPos(4, 9)
+    mon.write("Security responses are user defined.")
+    mon.setCursorPos(4, 10)
+    mon.write("Failed PIN x3, Failed PIN x5, and Panic Lock can run")
+    mon.setCursorPos(4, 11)
+    mon.write("single device actions plus one or more saved groups.")
+    mon.setCursorPos(4, 13)
+    mon.write("Use bottom buttons to configure security.")
+  end
+
+
   monControls = function()
+    if terminalLocked then
+      drawLockScreen()
+      return
+    end
     clearMonButtons()
     drawTopTabs()
     if viewMode == "GROUPS" then
       drawGroupsScreen()
+    elseif viewMode == "SETTINGS" then
+      drawSettingsScreen()
     else
       drawDevicesScreen()
     end
     drawBottomBar()
   end
+end
+
+
+
+ensureSecurityDefaults = function()
+  ccSettings.security = ccSettings.security or { }
+  local sec = ccSettings.security
+  if sec.pinEnabled == nil then sec.pinEnabled = false end
+  if sec.panicLockEnabled == nil then sec.panicLockEnabled = false end
+  if sec.pin == nil then sec.pin = "" end
+  sec.responses = sec.responses or { }
+  sec.responses.failed3 = sec.responses.failed3 or { actions = { }, groups = { } }
+  sec.responses.failed5 = sec.responses.failed5 or { actions = { }, groups = { } }
+  sec.responses.panic = sec.responses.panic or { actions = { }, groups = { } }
+end
+
+runSecurityResponse = function(key)
+  ensureSecurityDefaults()
+  local response = ccSettings.security.responses[key]
+  if not response then return false end
+  local ran = false
+  if type(response.actions) == "table" then
+    for i = 1, #response.actions do
+      local action = response.actions[i]
+      if action.name and action.cmd then
+        local target = findClientByName(action.name)
+        if target and sendCommandToClient(target, action.cmd) then ran = true end
+      end
+    end
+  end
+  if type(response.groups) == "table" then
+    for i = 1, #response.groups do
+      local ok = activateGroup(response.groups[i])
+      if ok then ran = true end
+    end
+  end
+  client = "SECURITY"
+  thisCommand = string.upper(tostring(key))
+  ccSuccess = ran
+  ccUpdate = true
+  return ran
+end
+
+drawLockScreen = function()
+  uiButtons = { }
+  clearMon(mblack)
+  local accent = (colorBurst[ccSettings.color] and colorBurst[ccSettings.color][2]) or mgray
+  mon.setBackgroundColor(accent)
+  mon.setTextColor(mwhite)
+  mon.setCursorPos(1, 1)
+  mon.write(string.rep(" ", monX))
+  local title = tostring(ccSettings.name or "WiRe Server") .. "  -  LOCKED"
+  mon.setCursorPos(math.max(1, math.floor((monX - #title) / 2)), 1)
+  mon.write(title:sub(1, monX))
+
+  mon.setBackgroundColor(mblack)
+  mon.setTextColor(mred)
+  local locked = "TERMINAL LOCKED"
+  mon.setCursorPos(math.max(1, math.floor((monX - #locked) / 2)), math.max(3, math.floor(monY / 2) - 5))
+  mon.write(locked)
+
+  mon.setTextColor(mwhite)
+  local stars = string.rep("*", #pinBuffer)
+  local pinLine = "PIN: " .. stars
+  mon.setCursorPos(math.max(1, math.floor((monX - #pinLine) / 2)), math.max(5, math.floor(monY / 2) - 3))
+  mon.write(pinLine)
+
+  local labels = { "1", "2", "3", "4", "5", "6", "7", "8", "9", "CLR", "0", "OK" }
+  local actions = { "PIN_1", "PIN_2", "PIN_3", "PIN_4", "PIN_5", "PIN_6", "PIN_7", "PIN_8", "PIN_9", "PIN_CLR", "PIN_0", "PIN_OK" }
+  local bw, gap = 7, 2
+  local startX = math.max(1, math.floor((monX - ((bw * 3) + (gap * 2))) / 2))
+  local startY = math.max(7, math.floor(monY / 2) - 1)
+  for i = 1, #labels do
+    local col = (i - 1) % 3
+    local row = math.floor((i - 1) / 3)
+    local x = startX + col * (bw + gap)
+    local y = startY + row * 2
+    local bg = (labels[i] == "OK" and mgreen) or (labels[i] == "CLR" and mred) or mgray
+    mon.setCursorPos(x, y)
+    mon.setBackgroundColor(bg)
+    mon.setTextColor(mwhite)
+    local label = "[" .. labels[i] .. "]"
+    mon.write(label .. string.rep(" ", math.max(0, bw - #label)))
+    addUIButton(labels[i], actions[i], x, x + bw - 1, y)
+  end
+end
+
+handlePinAction = function(action)
+  ensureSecurityDefaults()
+  if action == "PIN_CLR" then
+    pinBuffer = ""
+  elseif action == "PIN_OK" then
+    if pinBuffer ~= "" and pinBuffer == tostring(ccSettings.security.pin or "") then
+      terminalLocked = false
+      pinBuffer = ""
+      failedPinAttempts = 0
+    else
+      failedPinAttempts = failedPinAttempts + 1
+      pinBuffer = ""
+      if failedPinAttempts == 3 then runSecurityResponse("failed3") end
+      if failedPinAttempts == 5 then runSecurityResponse("failed5") end
+    end
+  elseif action:sub(1, 4) == "PIN_" then
+    local d = action:sub(5)
+    if #pinBuffer < 8 and string.match(d, "^%d$") then pinBuffer = pinBuffer .. d end
+  end
+  ccUpdate = true
+end
+
+readSecurityPinPrompt = function(prompt)
+  uiModalActive = true
+  term.setBackgroundColor(black)
+  term.setTextColor(white)
+  term.clear()
+  term.setCursorPos(1, 1)
+  print(prompt or "Enter WiRe security PIN")
+  print("Numbers only. Leave blank to cancel.")
+  write("PIN: ")
+  local p = read("*")
+  uiModalActive = false
+  return p
+end
+
+local function chooseSecurityGroups(starting)
+  local picked = { }
+  if type(starting) == "table" then for i=1,#starting do picked[starting[i]] = true end end
+  local names = sortedGroupNames()
+  term.setBackgroundColor(black)
+  term.setTextColor(white)
+  term.clear()
+  term.setCursorPos(1, 1)
+  print("Security response groups")
+  print("Type numbers separated by commas, blank for none.")
+  print("")
+  for i = 1, #names do print(tostring(i) .. ") " .. names[i]) end
+  print("")
+  write("Groups: ")
+  local line = read()
+  local out = { }
+  for n in string.gmatch(line or "", "%d+") do
+    local name = names[tonumber(n)]
+    if name then out[#out + 1] = name end
+  end
+  return out
+end
+
+local function editSecurityResponseUI(key, label)
+  ensureSecurityDefaults()
+  uiModalActive = true
+  local ok, err = pcall(function()
+    local response = ccSettings.security.responses[key] or { actions = { }, groups = { } }
+    term.setBackgroundColor(black)
+    term.setTextColor(white)
+    term.clear()
+    term.setCursorPos(1, 1)
+    print("Editing security response: " .. tostring(label))
+    print("")
+    print("First choose groups on the terminal.")
+    sleep(1)
+    local groups = chooseSecurityGroups(response.groups)
+    print("Now choose single device actions on the monitor.")
+    sleep(1)
+    local actions = buildGroupFromMonitor("SECURITY " .. tostring(label), response.actions)
+    if actions then
+      ccSettings.security.responses[key] = { actions = actions, groups = groups }
+      saveData()
+    end
+  end)
+  uiModalActive = false
+  if not ok then print("Security edit error: " .. tostring(err)); sleep(2) end
+  termScreenStatic()
+  ccUpdate = true
+  updateScreens()
+end
+
+securityResponsesMenu = function()
+  uiModalActive = true
+  term.setBackgroundColor(black)
+  term.setTextColor(white)
+  term.clear()
+  term.setCursorPos(1, 1)
+  print("WiRe Security Responses")
+  print("1) Failed PIN x3")
+  print("2) Failed PIN x5")
+  print("3) Panic Lock")
+  print("")
+  write("Select: ")
+  local choice = read()
+  uiModalActive = false
+  if choice == "1" then editSecurityResponseUI("failed3", "Failed PIN x3") end
+  if choice == "2" then editSecurityResponseUI("failed5", "Failed PIN x5") end
+  if choice == "3" then editSecurityResponseUI("panic", "Panic Lock") end
 end
 
 local function clearTerm()
@@ -1424,7 +1734,7 @@ end
 
 
 --# WiRe Server+ group helpers
-local function findClientByName(name)
+findClientByName = function(name)
   for i = 1, #allClients do
     if allClients[i].name == name then
       return allClients[i], i
@@ -1741,7 +2051,7 @@ local function drawGroupEditorCommandMenu(groupName, selectedClient, existingCmd
   return buttons
 end
 
-local function buildGroupFromMonitor(groupName, startingActions)
+buildGroupFromMonitor = function(groupName, startingActions)
   local actions = copyActions(startingActions)
   local editorPage = 1
   local editorPages = math.max(1, math.ceil(#allClients / monSlots))
@@ -2179,15 +2489,21 @@ local function handleButtonAction(action)
     viewMode = "DEVICES"
   elseif action == "VIEW_GROUPS" then
     viewMode = "GROUPS"
+  elseif action == "VIEW_SETTINGS" then
+    viewMode = "SETTINGS"
   elseif action == "PAGE_PREV" then
     if viewMode == "GROUPS" then
       groupPage = math.max(1, groupPage - 1)
+    elseif viewMode == "SETTINGS" then
+      --# Settings has one page.
     else
       pageNum = math.max(1, pageNum - 1)
     end
   elseif action == "PAGE_NEXT" then
     if viewMode == "GROUPS" then
       groupPage = groupPage + 1
+    elseif viewMode == "SETTINGS" then
+      --# Settings has one page.
     else
       pageNum = math.min(numPages, pageNum + 1)
     end
@@ -2197,6 +2513,66 @@ local function handleButtonAction(action)
     editGroupUI()
   elseif action == "DEL_GROUP" then
     deleteGroupUI()
+  elseif action == "SEARCH" then
+    uiModalActive = true
+    term.setBackgroundColor(black)
+    term.setTextColor(white)
+    term.clear()
+    term.setCursorPos(1, 1)
+    print("WiRe device search")
+    print("Examples: L28, L06, N-, C-01")
+    print("")
+    write("Search: ")
+    searchText = read()
+    pageNum = 1
+    uiModalActive = false
+  elseif action == "SEARCH_CLEAR" then
+    searchText = ""
+    pageNum = 1
+  elseif action == "SORT_TOGGLE" then
+    sortAZ = not sortAZ
+    pageNum = 1
+  elseif action == "SEC_TOGGLE_PIN" then
+    ensureSecurityDefaults()
+    if not ccSettings.security.pinEnabled then
+      local p = readSecurityPinPrompt("Set WiRe security PIN to enable locking")
+      if p and p ~= "" then
+        ccSettings.security.pin = p
+        ccSettings.security.pinEnabled = true
+        saveData()
+      end
+    else
+      ccSettings.security.pinEnabled = false
+      terminalLocked = false
+      saveData()
+    end
+  elseif action == "SEC_SET_PIN" then
+    ensureSecurityDefaults()
+    local p = readSecurityPinPrompt("Set new WiRe security PIN")
+    if p and p ~= "" then
+      ccSettings.security.pin = p
+      ccSettings.security.pinEnabled = true
+      saveData()
+    end
+  elseif action == "SEC_TOGGLE_PANIC" then
+    ensureSecurityDefaults()
+    ccSettings.security.panicLockEnabled = not ccSettings.security.panicLockEnabled
+    saveData()
+  elseif action == "SEC_RESPONSES" then
+    securityResponsesMenu()
+  elseif action == "LOCK_NOW" then
+    ensureSecurityDefaults()
+    if ccSettings.security.pinEnabled and tostring(ccSettings.security.pin or "") ~= "" then
+      terminalLocked = true
+      pinBuffer = ""
+    end
+  elseif action == "PANIC_LOCK" then
+    runSecurityResponse("panic")
+    ensureSecurityDefaults()
+    if ccSettings.security.pinEnabled and tostring(ccSettings.security.pin or "") ~= "" then
+      terminalLocked = true
+      pinBuffer = ""
+    end
   end
   ccUpdate = true
 end
@@ -2206,6 +2582,16 @@ local function monTouch()
   while true do
     _, touchSide, posX, posY = os.pullEvent("monitor_touch")
     if touchSide == monSide then
+      if terminalLocked then
+        for i = 1, #uiButtons do
+          local b = uiButtons[i]
+          if posY == b.y and posX >= b.x1 and posX <= b.x2 then
+            handlePinAction(b.action)
+            break
+          end
+        end
+        updateScreens()
+      else
       local handled = false
       for i = 1, #uiButtons do
         local b = uiButtons[i]
@@ -2228,23 +2614,29 @@ local function monTouch()
       end
 
       if not handled and viewMode == "DEVICES" then
+        rebuildVisibleClients()
         local startIndex = ((pageNum - 1) * monSlots) + 1
-        local endIndex = math.min(startIndex + monSlots - 1, #allClients)
+        local endIndex = math.min(startIndex + monSlots - 1, #visibleClients)
         for i = startIndex, endIndex do
           local displayIndex = i - startIndex + 1
+          local entry = visibleClients[i]
+          local realIndex = entry.realIndex
+          local c = entry.client
           local x1, y1 = getGridSlotPos(displayIndex)
           local x2 = x1 + 5
           if posX >= x1 and posX <= x2 and posY >= y1 and posY <= y1 + 4 then
-            client = allClients[i].cc
+            client = c.cc
             if posY == y1 + 4 then
-              allClients[i].lockState = not allClients[i].lockState
-              thisCommand = allClients[i].lockState and "LOCKED" or "UNLOCK"
+              c.lockState = not c.lockState
+              allClients[realIndex].lockState = c.lockState
+              thisCommand = c.lockState and "LOCKED" or "UNLOCK"
               ccSuccess = netSend()
               ccUpdate = true
             elseif posY >= y1 + 2 and posY <= y1 + 3 then
-              if not allClients[i].lockState then
-                thisCommand = validStates[allClients[i].deviceState][3]
-                allClients[i].deviceState = thisCommand
+              if not c.lockState then
+                thisCommand = validStates[c.deviceState][3]
+                c.deviceState = thisCommand
+                allClients[realIndex].deviceState = thisCommand
                 ccSuccess = netSend()
                 ccUpdate = true
               end
@@ -2254,6 +2646,7 @@ local function monTouch()
         end
       end
       if ccUpdate then updateScreens() end
+      end
     end
   end
 end
@@ -2461,6 +2854,8 @@ if ccSettings.getFix ~= nil or not ccSettings.newColors then
   end
   saveData()
 end
+ensureSecurityDefaults()
+saveData()
 term.setCursorPos(2, 4)
 term.write("Configuring hardware . . .")
 for _, side in pairs(rs.getSides()) do
