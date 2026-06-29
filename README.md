@@ -17,12 +17,29 @@ WiRe is designed to be completely generic. It can control anything that can be o
 
 ---
 
-## Original Project
+## History
 
-The original **WiRe** project was created by **Dog (HydrantHunter)**.
+The original **WiRe (Wireless Redstone)** project was created by **Dog**, also known as **HydrantHunter**, as a simple wireless redstone control system for ComputerCraft.
 
-This repository is the **WiRe Development Project**, which continues development while preserving credit to the original author.
+The original project introduced the core concept of discovering wireless redstone devices and controlling them from a central server using wireless modems. It provided the foundation on which many ComputerCraft automation projects were built.
 
+The **WiRe Development Project** continues from that foundation. While the original concepts remain respected and credited, this repository is an independent continuation focused on expanding WiRe into a more capable, modular and maintainable automation platform for **CC:Tweaked**.
+
+Current development aims to preserve the original spirit of WiRe while introducing new features such as:
+
+- Improved device management
+- Device grouping
+- Enhanced user interface
+- Search and sorting
+- Security and access control
+- Portable tablet support
+- Continued community-driven development
+
+The original WiRe project can still be found here:
+
+**Original Pastebin:** `hqpRw4Jy`
+
+Without Dog's original work, the WiRe Development Project would not exist.
 ---
 
 # Installation
