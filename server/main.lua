@@ -3,7 +3,7 @@
 --==============================================================--
 -- Original WiRe created by Dog (HydrantHunter)                 --
 -- Wi = Wireless | Re = Redstone                               --
--- Original Release: Pastebin hqpRw4Jy                          --
+-- Original Release: Pastebin hqpRw4Jy                         --
 --                                                              --
 -- WiRe Development Edition                                     --
 -- Extensively redesigned and expanded by the WiRe Project.     --
