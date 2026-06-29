@@ -141,18 +141,6 @@ local function installPackage(key)
     return ok
 end
 
-local function installAll()
-    local okCount = 0
-    for _, key in ipairs({"server", "client", "trigger"}) do
-        if downloadFile(packages[key].source, packages[key].target) then
-            okCount = okCount + 1
-        end
-    end
-    print()
-    writeLine("Installed " .. okCount .. " of 3 packages.", okCount == 3 and colors.green or colors.orange)
-    print("Auto-start is not created when installing all packages.")
-end
-
 local function menu()
     while true do
         clear()
@@ -166,8 +154,7 @@ local function menu()
         print("1. Install Server")
         print("2. Install Client")
         print("3. Install Trigger")
-        print("4. Install All")
-        print("5. Exit")
+        print("4. Exit")
         print()
         write("Select option: ")
 
@@ -184,9 +171,6 @@ local function menu()
             installPackage("trigger")
             pause()
         elseif choice == "4" then
-            installAll()
-            pause()
-        elseif choice == "5" then
             clear()
             return
         else
