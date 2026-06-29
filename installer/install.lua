@@ -1,129 +1,202 @@
--- WiRe Installer
--- Put this file on Pastebin, then users run: pastebin run <code>
+--==============================================================--
+--                         WiRe Installer                       --
+--==============================================================--
+-- WiRe Development Edition                                     --
+-- Downloads WiRe components from GitHub for CC:Tweaked.        --
+--==============================================================--
 
-local REPO_RAW = "https://raw.githubusercontent.com/Atty29/WiRe/main/"
-local MANIFEST_URL = REPO_RAW .. "manifest.lua"
+local REPO_USER = "Atty29"
+local REPO_NAME = "WiRe"
+local BRANCH = "main"
+local BASE_URL = "https://raw.githubusercontent.com/" .. REPO_USER .. "/" .. REPO_NAME .. "/" .. BRANCH .. "/"
+
+local INSTALL_DIR = "wire"
+
+local packages = {
+    server = {
+        title = "WiRe Server",
+        source = "server/main.lua",
+        target = INSTALL_DIR .. "/server.lua",
+        startup = "shell.run(\"" .. INSTALL_DIR .. "/server.lua\")"
+    },
+    client = {
+        title = "WiRe Client",
+        source = "client/main.lua",
+        target = INSTALL_DIR .. "/client.lua",
+        startup = "shell.run(\"" .. INSTALL_DIR .. "/client.lua\")"
+    },
+    trigger = {
+        title = "WiRe Trigger",
+        source = "trigger/main.lua",
+        target = INSTALL_DIR .. "/trigger.lua",
+        startup = "shell.run(\"" .. INSTALL_DIR .. "/trigger.lua\")"
+    }
+}
 
 local function clear()
-  term.setBackgroundColor(colors.black)
-  term.setTextColor(colors.white)
-  term.clear()
-  term.setCursorPos(1, 1)
+    term.setBackgroundColor(colors.black)
+    term.setTextColor(colors.white)
+    term.clear()
+    term.setCursorPos(1, 1)
 end
 
-local function ensureDir(path)
-  local parts = {}
-  for part in string.gmatch(path, "[^/]+") do table.insert(parts, part) end
-  if #parts <= 1 then return end
-  local current = ""
-  for i = 1, #parts - 1 do
-    current = current == "" and parts[i] or (current .. "/" .. parts[i])
-    if not fs.exists(current) then fs.makeDir(current) end
-  end
+local function writeLine(text, colour)
+    if colour then term.setTextColor(colour) end
+    print(text)
+    term.setTextColor(colors.white)
 end
 
-local function download(url, dest)
-  print("Downloading " .. dest)
-  local h = http.get(url)
-  if not h then error("Failed to download: " .. url) end
-  local data = h.readAll()
-  h.close()
-  ensureDir(dest)
-  if fs.exists(dest) then fs.delete(dest) end
-  local f = fs.open(dest, "w")
-  f.write(data)
-  f.close()
+local function pause()
+    print()
+    write("Press Enter to continue...")
+    read()
 end
 
-local function loadManifest()
-  local h = http.get(MANIFEST_URL)
-  if not h then
-    error("Could not reach GitHub. Is HTTP enabled in CC:Tweaked config?")
-  end
-  local code = h.readAll()
-  h.close()
-  local fn, err = load(code, "manifest", "t", {})
-  if not fn then error(err) end
-  return fn()
+local function checkHttp()
+    if not http then
+        writeLine("HTTP API is not enabled.", colors.red)
+        print("Enable HTTP in the ComputerCraft/CC:Tweaked config.")
+        return false
+    end
+    return true
 end
 
-local function makeStartup(target)
-  if fs.exists("startup.lua") then
-    print("startup.lua already exists, leaving it alone.")
-    return
-  end
-  local f = fs.open("startup.lua", "w")
-  f.writeLine("shell.run(\"" .. target .. "\")")
-  f.close()
-  print("Created startup.lua -> " .. target)
+local function downloadFile(sourcePath, targetPath)
+    local url = BASE_URL .. sourcePath
+    writeLine("Downloading:", colors.lightBlue)
+    print(url)
+    print("-> " .. targetPath)
+
+    local response, err = http.get(url)
+    if not response then
+        writeLine("Download failed: " .. tostring(err), colors.red)
+        return false
+    end
+
+    local data = response.readAll()
+    response.close()
+
+    local folder = fs.getDir(targetPath)
+    if folder ~= "" and not fs.exists(folder) then
+        fs.makeDir(folder)
+    end
+
+    local file = fs.open(targetPath, "w")
+    file.write(data)
+    file.close()
+
+    writeLine("Installed " .. targetPath, colors.green)
+    return true
+end
+
+local function askYesNo(question, defaultNo)
+    while true do
+        write(question .. (defaultNo and " [y/N]: " or " [Y/n]: "))
+        local answer = string.lower(read())
+        if answer == "" then return not defaultNo end
+        if answer == "y" or answer == "yes" then return true end
+        if answer == "n" or answer == "no" then return false end
+    end
+end
+
+local function createStartup(pkg)
+    if fs.exists("startup.lua") then
+        writeLine("startup.lua already exists.", colors.orange)
+        if not askYesNo("Replace startup.lua so this starts automatically?", true) then
+            return
+        end
+    else
+        if not askYesNo("Start " .. pkg.title .. " automatically on boot?", false) then
+            return
+        end
+    end
+
+    local file = fs.open("startup.lua", "w")
+    file.writeLine("-- WiRe auto-start file")
+    file.writeLine(pkg.startup)
+    file.close()
+
+    writeLine("startup.lua created.", colors.green)
+end
+
+local function installPackage(key)
+    local pkg = packages[key]
+    if not pkg then return false end
+
+    print()
+    writeLine("Installing " .. pkg.title, colors.yellow)
+
+    if fs.exists(pkg.target) then
+        writeLine(pkg.target .. " already exists.", colors.orange)
+        if not askYesNo("Overwrite it?", true) then
+            writeLine("Skipped.", colors.orange)
+            return false
+        end
+    end
+
+    local ok = downloadFile(pkg.source, pkg.target)
+    if ok then
+        createStartup(pkg)
+    end
+    return ok
+end
+
+local function installAll()
+    local okCount = 0
+    for _, key in ipairs({"server", "client", "trigger"}) do
+        if downloadFile(packages[key].source, packages[key].target) then
+            okCount = okCount + 1
+        end
+    end
+    print()
+    writeLine("Installed " .. okCount .. " of 3 packages.", okCount == 3 and colors.green or colors.orange)
+    print("Auto-start is not created when installing all packages.")
+end
+
+local function menu()
+    while true do
+        clear()
+        writeLine("==============================", colors.purple)
+        writeLine("        WiRe Installer        ", colors.white)
+        writeLine("==============================", colors.purple)
+        print()
+        print("Repository:")
+        print("github.com/" .. REPO_USER .. "/" .. REPO_NAME)
+        print()
+        print("1. Install Server")
+        print("2. Install Client")
+        print("3. Install Trigger")
+        print("4. Install All")
+        print("5. Exit")
+        print()
+        write("Select option: ")
+
+        local choice = read()
+
+        clear()
+        if choice == "1" then
+            installPackage("server")
+            pause()
+        elseif choice == "2" then
+            installPackage("client")
+            pause()
+        elseif choice == "3" then
+            installPackage("trigger")
+            pause()
+        elseif choice == "4" then
+            installAll()
+            pause()
+        elseif choice == "5" then
+            clear()
+            return
+        else
+            writeLine("Invalid option.", colors.red)
+            pause()
+        end
+    end
 end
 
 clear()
-print("==============================")
-print("         WiRe Installer")
-print("==============================")
-print("")
-
-local manifest = loadManifest()
-print("Latest version: " .. tostring(manifest.version))
-print("")
-print("1. Install Server")
-print("2. Install Client")
-print("3. Install Trigger")
-print("4. Install Tablet")
-print("5. Install Full Package")
-print("6. Update Existing / Repair")
-print("")
-write("Select option: ")
-local choice = read()
-
-local keyMap = {
-  ["1"] = "server",
-  ["2"] = "client",
-  ["3"] = "trigger",
-  ["4"] = "tablet",
-  ["5"] = "full",
-  ["6"] = "full",
-}
-
-local key = keyMap[choice]
-if not key or not manifest.packages[key] then
-  print("Invalid option.")
-  return
-end
-
-local package = manifest.packages[key]
-print("")
-print("Installing: " .. package.label)
-print("")
-
-local baseUrl = manifest.baseUrl or REPO_RAW
-for _, file in ipairs(package.files) do
-  download(baseUrl .. file.src, file.dest)
-end
-
-print("")
-print("Install complete.")
-
-if package.startup then
-  write("Auto-run this package on boot? Y/N: ")
-  local ans = string.lower(read() or "")
-  if ans == "y" or ans == "yes" then
-    makeStartup(package.startup)
-  end
-  print("")
-  print("Run now with:")
-  print(package.startup)
-  print("")
-  write("Run now? Y/N: ")
-  local runNow = string.lower(read() or "")
-  if runNow == "y" or runNow == "yes" then
-    shell.run(package.startup)
-  end
-else
-  print("Full package installed. Run one of:")
-  print("wire/server/main.lua")
-  print("wire/client/main.lua")
-  print("wire/trigger/main.lua")
-  print("wire/tablet/main.lua")
+if checkHttp() then
+    menu()
 end
