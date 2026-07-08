@@ -2323,8 +2323,10 @@ do
                 local request = type(newCmdData.request) == "string" and string.upper(newCmdData.request) or nil
                 if request == "LISTGROUPS" then
                   ccSuccess = sendGroupList(id)
+                elseif request == "LISTDEVICES" then
+                ccSuccess = sendDeviceList(id)
                 elseif request == "SERVERINFO" then
-                  ccSuccess = sendServerInfo(id)
+                ccSuccess = sendServerInfo(id)
                 else
                   local triggered = false
                   if type(newCmdData.groups) == "table" then
