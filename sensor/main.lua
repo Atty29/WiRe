@@ -1299,6 +1299,10 @@ local function getGroupsFromServer()
   local data = waitForEncryptedResponse("GROUPLIST", DISCOVERY_TIMEOUT)
   if not data or type(data.groups) ~= "table" then return nil end
 
+  local function getDevicesFromServer()
+    ...
+end
+
   local list = {}
   for _, g in ipairs(data.groups) do
     list[#list + 1] = { id = tostring(g), name = tostring(g) }
