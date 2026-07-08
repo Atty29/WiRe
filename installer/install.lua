@@ -33,7 +33,6 @@ local packages = {
         source = "sensor/main.lua",
         target = INSTALL_DIR .. "/sensor.lua",
         startup = "shell.run(\"" .. INSTALL_DIR .. "/sensor.lua\")"
-    },
     }
 }
 
