@@ -1,6 +1,6 @@
 --[[---------------------------------------------------------
   WiRe Sensor
-  Version: 0.1.4-dev
+  Version: 0.1.5-dev
 
   Original WiRe by Dog / HydrantHunter
   WiRe Development Edition module
@@ -17,7 +17,7 @@
     client device.
 ---------------------------------------------------------]]--
 
-local VERSION = "0.1.4-dev"
+local VERSION = "0.1.5-dev"
 local CONFIG = "/data/WiRe/sensor.cfg"
 local DISCOVERY_TIMEOUT = 5
 local thisCC = tostring(os.getComputerID())
@@ -1337,7 +1337,8 @@ local function sendGroupAction(groupName, action)
 end
 
 local function sendDeviceAction(deviceId, action)
-  sendEncrypted({ device = deviceId, action = action }, cfg.server)
+  -- Server-side device actions expect cmd, matching normal WiRe commands.
+  sendEncrypted({ device = deviceId, cmd = string.upper(tostring(action or "")) }, cfg.server)
 end
 
 local function chooseFromList(title, list)
@@ -1755,18 +1756,30 @@ local function fireLevel(level)
   sleep(0.75)
 end
 
-local function monitorLoop()
-  local previous = -1
+local function drawMonitoringScreen(level, lastText)
   clear()
   print("WiRe Sensor " .. VERSION)
   print("----------------")
   print("Name: " .. tostring(cfg.shortName))
   print("Colour: " .. tostring(cfg.color))
-  print("Server: " .. tostring(cfg.server or "none"))
+  print("Server: " .. tostring(cfg.serverName or cfg.server or "none"))
+  print("Input: " .. tostring(cfg.inputMode) .. " / " .. tostring(cfg.inputSide))
+  if cfg.inputMode == "integrator" then
+    print("Peripheral: " .. tostring(cfg.peripheralName))
+  end
   print("")
-  print("Monitoring...")
-  print("Press Q to quit.")
-  sleep(1)
+  print("MONITORING")
+  print("Current Level: " .. tostring(level or readSignal()))
+  print("Last Event: " .. tostring(lastText or "none"))
+  print("")
+  print("Use the Terminate button to open the menu.")
+  print("Power button will stop the computer.")
+end
+
+local function monitorLoop()
+  local previous = -1
+  local lastText = "none"
+  drawMonitoringScreen(readSignal(), lastText)
 
   while true do
     local level = tonumber(readSignal()) or 0
@@ -1775,23 +1788,47 @@ local function monitorLoop()
 
     if level ~= previous then
       previous = level
+      local e = cfg.events and cfg.events[level]
       fireLevel(level)
-      clear()
-      print("WiRe Sensor " .. VERSION)
-      print("----------------")
-      print("Name: " .. tostring(cfg.shortName))
-      print("Current Level: " .. tostring(level))
-      print("")
-      print("Press Q to quit.")
+      if e then
+        lastText = "Level " .. tostring(level) .. " -> " .. tostring(e.targetName or e.target)
+      else
+        lastText = "Level " .. tostring(level) .. " disabled"
+      end
+      drawMonitoringScreen(level, lastText)
     end
 
     local timer = os.startTimer(POLL_TIME)
-    local event, p1 = os.pullEvent()
-    if event == "char" and string.lower(p1) == "q" then
-      return
-    elseif event == "timer" then
+    local event, p1 = os.pullEventRaw()
+    if event == "terminate" then
+      return "menu"
+    elseif event == "timer" and p1 == timer then
       -- continue
     end
+  end
+end
+
+local function safeMonitorLoop()
+  while true do
+    local ok, result = pcall(monitorLoop)
+    if ok then
+      return result
+    end
+
+    clear()
+    print("WiRe Sensor Error")
+    print("-----------------")
+    print(tostring(result))
+    print("")
+    print("1. Restart monitoring")
+    print("2. Open menu")
+    print("3. Exit to shell")
+    print("")
+    write("> ")
+    local c = read()
+    if c == "2" then return "menu" end
+    if c == "3" then return "exit" end
+    -- anything else restarts monitoring
   end
 end
 
@@ -1808,7 +1845,7 @@ local function mainMenu()
     end
     print("Current Level: " .. tostring(readSignal()))
     print("")
-    print("1. Start monitoring")
+    print("1. Resume monitoring")
     print("2. Edit level events")
     print("3. Change input source")
     print("4. Rediscover server")
@@ -1819,7 +1856,7 @@ local function mainMenu()
 
     local c = read()
     if c == "1" then
-      monitorLoop()
+      return "monitor"
     elseif c == "2" then
       editEvents()
     elseif c == "3" then
@@ -1838,7 +1875,7 @@ local function mainMenu()
   end
 end
 
-local function main()
+local function boot()
   cfg = loadConfig()
   if not cfg then setup() end
   cfg.events = cfg.events or {}
@@ -1847,7 +1884,42 @@ local function main()
   updateNetwork()
   local foundServer = findServerByColour()
   if foundServer then cfg.server = foundServer end
-  mainMenu()
+end
+
+local function main()
+  boot()
+
+  local arg = tArgs and string.lower(tostring(tArgs[1] or "")) or ""
+  if arg == "setup" then
+    setup()
+    boot()
+  elseif arg == "menu" then
+    local nextMode = mainMenu()
+    if nextMode == "monitor" then
+      -- continue to monitor below
+    else
+      return
+    end
+  elseif arg == "events" then
+    editEvents()
+    saveConfig()
+  elseif arg == "input" then
+    configureInput()
+    saveConfig()
+  end
+
+  -- Default behaviour is safety-first: always monitor immediately.
+  while true do
+    local result = safeMonitorLoop()
+    if result == "menu" then
+      local nextMode = mainMenu()
+      if nextMode ~= "monitor" then return end
+    elseif result == "exit" then
+      return
+    else
+      return
+    end
+  end
 end
 
 main()
