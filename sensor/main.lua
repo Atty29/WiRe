@@ -1,27 +1,24 @@
 --[[---------------------------------------------------------
-  WiRe Trigger
-  Version: 1.3.0
+  WiRe Sensor
+  Version: 0.1.4-dev
 
   Original WiRe by Dog / HydrantHunter
-  WiRe+ Trigger add-on
+  WiRe Development Edition module
 
   Purpose:
-    One computer + one modem + one advanced monitor = one trigger button.
-    One button can activate one or more saved WiRe Server+ groups.
+    Reads an analogue redstone level 0-15 from local redstone
+    or an Advanced Peripherals Redstone Integrator, then fires
+    configured WiRe group/device actions via the WiRe Server.
 
-  Design:
-    The selected WiRe colour/channel IS the target WiRe network.
-    The trigger discovers the server using encrypted WiRe-style packets.
-
-  Requires:
-    - WiRe Server+ 3.0.4 or newer
-    - ComputerCraft / CC:Tweaked
-    - Modem
-    - Advanced Monitor
+  Notes:
+    Uses the existing WiRe Trigger-compatible encrypted request
+    path so current WiRe Server+ builds can answer SERVERINFO,
+    LISTGROUPS and LISTDEVICES without adding Sensor as a visible
+    client device.
 ---------------------------------------------------------]]--
 
-local VERSION = "1.3.0"
-local CONFIG = "/data/WiRe/trigger.cfg"
+local VERSION = "0.1.4-dev"
+local CONFIG = "/data/WiRe/sensor.cfg"
 local DISCOVERY_TIMEOUT = 5
 local thisCC = tostring(os.getComputerID())
 
@@ -1205,7 +1202,7 @@ end
 local function sendEncrypted(packet, targetId)
   openModem()
   updateNetwork()
-  packet.program = packet.program or "WiReSensor"
+  packet.program = packet.program or "WiReTrigger"
   packet.cc = tonumber(thisCC)
   packet.color = cfg.color
 
@@ -1305,27 +1302,6 @@ local function getGroupsFromServer()
   end
   table.sort(list, function(a,b) return a.name < b.name end)
   return list
-end
-
-local function getDevicesFromServer()
-  clear()
-  print("Requesting devices from:")
-  print(cfg.serverName or cfg.color)
-  print("")
-
-  sendEncrypted({ request = "LISTDEVICES" }, cfg.server)
-
-  local data = waitForEncryptedResponse("DEVICELIST", DISCOVERY_TIMEOUT)
-
-  if not data or type(data.devices) ~= "table" then
-    return nil
-  end
-
-  table.sort(data.devices, function(a, b)
-    return tostring(a.name or "") < tostring(b.name or "")
-  end)
-
-  return data.devices
 end
 
 local function getDevicesFromServer()
