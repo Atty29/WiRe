@@ -28,7 +28,7 @@ local packages = {
         target = INSTALL_DIR .. "/trigger.lua",
         startup = "shell.run(\"" .. INSTALL_DIR .. "/trigger.lua\")"
      }, 
-        sensor = {
+    sensor = {
         title = "WiRe Sensor",
         source = "sensor/main.lua",
         target = INSTALL_DIR .. "/sensor.lua",
