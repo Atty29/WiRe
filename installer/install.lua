@@ -190,7 +190,8 @@ local function menu()
         print("1. Install Server")
         print("2. Install Client")
         print("3. Install Trigger")
-        print("4. Exit")
+        print("4. Install Sensor")
+        print("5. Exit")
         print()
         write("Select option: ")
 
@@ -206,6 +207,9 @@ local function menu()
             installPackage("trigger")
             return
         elseif choice == "4" then
+            installPackage("sensor")
+            return
+        elseif choice == "5" then
             clear()
             return
         else
