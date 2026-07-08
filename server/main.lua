@@ -2334,9 +2334,15 @@ do
                       local ok = activateGroup(newCmdData.groups[g])
                       triggered = ok or triggered
                     end
-                  elseif type(newCmdData.group) == "string" then
-                    triggered = activateGroup(newCmdData.group)
-                  end
+elseif type(newCmdData.group) == "string" then
+  triggered = activateGroup(newCmdData.group)
+
+elseif type(newCmdData.device) == "string" and type(newCmdData.cmd) == "string" then
+  local target = findClientByName(newCmdData.device)
+  if target then
+    triggered = sendCommandToClient(target, newCmdData.cmd)
+  end
+end
                   ccSuccess = triggered
                 end
               end
