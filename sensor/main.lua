@@ -1299,16 +1299,33 @@ local function getGroupsFromServer()
   local data = waitForEncryptedResponse("GROUPLIST", DISCOVERY_TIMEOUT)
   if not data or type(data.groups) ~= "table" then return nil end
 
-  local function getDevicesFromServer()
-    ...
-end
-
   local list = {}
   for _, g in ipairs(data.groups) do
     list[#list + 1] = { id = tostring(g), name = tostring(g) }
   end
   table.sort(list, function(a,b) return a.name < b.name end)
   return list
+end
+
+local function getDevicesFromServer()
+  clear()
+  print("Requesting devices from:")
+  print(cfg.serverName or cfg.color)
+  print("")
+
+  sendEncrypted({ request = "LISTDEVICES" }, cfg.server)
+
+  local data = waitForEncryptedResponse("DEVICELIST", DISCOVERY_TIMEOUT)
+
+  if not data or type(data.devices) ~= "table" then
+    return nil
+  end
+
+  table.sort(data.devices, function(a, b)
+    return tostring(a.name or "") < tostring(b.name or "")
+  end)
+
+  return data.devices
 end
 
 local function getDevicesFromServer()
