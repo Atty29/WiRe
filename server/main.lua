@@ -1815,6 +1815,34 @@ local function sendGroupList(targetId)
   })
 end
 
+local function sendDeviceList(targetId)
+  local devices = {}
+
+  for i = 1, #allClients do
+    local c = allClients[i]
+    devices[#devices + 1] = {
+      name = c.name,
+      cc = c.cc,
+      deviceType = c.deviceType,
+      deviceState = c.deviceState,
+      lockState = c.lockState,
+    }
+  end
+
+  table.sort(devices, function(a, b)
+    return tostring(a.name or "") < tostring(b.name or "")
+  end)
+
+  return sendTriggerResponse(targetId, {
+    response = "DEVICELIST",
+    devices = devices,
+    deviceCount = #devices,
+    serverName = ccSettings.name,
+    serverNote = ccSettings.note,
+    serverVersion = WiReSver,
+  })
+end
+
 local function sendServerInfo(targetId)
   return sendTriggerResponse(targetId, {
     response = "SERVERINFO",
