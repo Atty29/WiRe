@@ -1,644 +1,1856 @@
---==============================================================--
---                          WiRe Sensor                         --
---==============================================================--
--- Original WiRe created by Dog (HydrantHunter)                 --
--- Wi = Wireless | Re = Redstone                                --
--- Original WiRe: Pastebin hqpRw4Jy                             --
---                                                              --
--- WiRe Development Edition                                     --
--- Extensively redesigned and expanded by the WiRe Project.     --
---                                                              --
--- Module: Sensor                                                --
--- Reads local redstone or a Redstone Integrator and sends       --
--- configured redstone level events to the WiRe Server.          --
---==============================================================--
+--[[---------------------------------------------------------
+  WiRe Trigger
+  Version: 1.3.0
+
+  Original WiRe by Dog / HydrantHunter
+  WiRe+ Trigger add-on
+
+  Purpose:
+    One computer + one modem + one advanced monitor = one trigger button.
+    One button can activate one or more saved WiRe Server+ groups.
+
+  Design:
+    The selected WiRe colour/channel IS the target WiRe network.
+    The trigger discovers the server using encrypted WiRe-style packets.
+
+  Requires:
+    - WiRe Server+ 3.0.4 or newer
+    - ComputerCraft / CC:Tweaked
+    - Modem
+    - Advanced Monitor
+---------------------------------------------------------]]--
+
+local VERSION = "1.3.0"
+local CONFIG = "/data/WiRe/trigger.cfg"
+local DISCOVERY_TIMEOUT = 5
+local thisCC = tostring(os.getComputerID())
+
+local b='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+-- encoding
+function encode(data)
+  return ((data:gsub('.', function(x) 
+    local r,b='',x:byte()
+    for i=8,1,-1 do r=r..(b%2^i-b%2^(i-1)>0 and '1' or '0') end
+    return r;
+  end)..'0000'):gsub('%d%d%d?%d?%d?%d?', function(x)
+    if (#x < 6) then return '' end
+    local c=0
+    for i=1,6 do c=c+(x:sub(i,i)=='1' and 2^(6-i) or 0) end
+    return b:sub(c+1,c+1)
+  end)..({ '', '==', '=' })[#data%3+1])
+end
+-- decoding
+function decode(data)
+  data = string.gsub(data, '[^'..b..'=]', '')
+  return (data:gsub('.', function(x)
+    if (x == '=') then return '' end
+    local r,f='',(b:find(x)-1)
+    for i=6,1,-1 do r=r..(f%2^i-f%2^(i-1)>0 and '1' or '0') end
+    return r;
+  end):gsub('%d%d%d?%d?%d?%d?%d?%d?', function(x)
+    if (#x ~= 8) then return '' end
+    local c=0
+    for i=1,8 do c=c+(x:sub(i,i)=='1' and 2^(8-i) or 0) end
+    return string.char(c)
+  end))
+end
+
+-- AES Lua implementation by SquidDev
+-- https://gist.github.com/SquidDev/86925e07cbabd70773e53d781bd8b2fe
+local encrypt, decrypt
+do
+  local function _W(f) local e=setmetatable({}, {__index = _ENV or getfenv()}) if setfenv then setfenv(f, e) end return f(e) or e end
+  local bit=_W(function(_ENV, ...)
+  --[[
+    This bit API is designed to cope with unsigned integers instead of normal integers
+    To do this we add checks for overflows: (x > 2^31 ? x - 2 ^ 32 : x)
+    These are written in long form because no constant folding.
+  ]]
+  local floor = math.floor
+  local lshift, rshift
+
+  rshift = function(a,disp)
+    return floor(a % 4294967296 / 2^disp)
+  end
+
+  lshift = function(a,disp)
+    return (a * 2^disp) % 4294967296
+  end
+
+  return {
+    -- bit operations
+    bnot = bit32 and bit32.bnot or bit.bnot,
+    band = bit32 and bit32.band or bit.band,
+    bor  = bit32 and bit32.bor or bit.bor,
+    bxor = bit32 and bit32.bxor or bit.bxor,
+    rshift = rshift,
+    lshift = lshift,
+  }
+  end)
+
+  local gf=_W(function(_ENV, ...)
+  -- finite field with base 2 and modulo irreducible polynom x^8+x^4+x^3+x+1 = 0x11d
+  local bxor = bit32 and bit32.bxor or bit.bxor
+  local lshift = bit.lshift
+  -- private data of gf
+  local n = 0x100
+  local ord = 0xff
+  local irrPolynom = 0x11b
+  local exp = {}
+  local log = {}
+  --
+  -- add two polynoms (its simply xor)
+  --
+  local function add(operand1, operand2)
+    return bxor(operand1,operand2)
+  end
+  --
+  -- subtract two polynoms (same as addition)
+  --
+  local function sub(operand1, operand2)
+    return bxor(operand1,operand2)
+  end
+  --
+  -- inverts element
+  -- a^(-1) = g^(order - log(a))
+  --
+  local function invert(operand)
+    -- special case for 1
+    if (operand == 1) then
+      return 1
+    end
+    -- normal invert
+    local exponent = ord - log[operand]
+    return exp[exponent]
+  end
+  --
+  -- multiply two elements using a logarithm table
+  -- a*b = g^(log(a)+log(b))
+  --
+  local function mul(operand1, operand2)
+    if (operand1 == 0 or operand2 == 0) then
+      return 0
+    end
+    local exponent = log[operand1] + log[operand2]
+    if (exponent >= ord) then
+      exponent = exponent - ord
+    end
+    return exp[exponent]
+  end
+  --
+  -- divide two elements
+  -- a/b = g^(log(a)-log(b))
+  --
+  local function div(operand1, operand2)
+    if (operand1 == 0)  then
+      return 0
+    end
+    -- TODO: exception if operand2 == 0
+    local exponent = log[operand1] - log[operand2]
+    if (exponent < 0) then
+      exponent = exponent + ord
+    end
+    return exp[exponent]
+  end
+  --
+  -- print logarithmic table
+  --
+  local function printLog()
+    for i = 1, n do
+      print("log(", i-1, ")=", log[i-1])
+    end
+  end
+  --
+  -- print exponentiation table
+  --
+  local function printExp()
+    for i = 1, n do
+      print("exp(", i-1, ")=", exp[i-1])
+    end
+  end
+  --
+  -- calculate logarithmic and exponentiation table
+  --
+  local function initMulTable()
+    local a = 1
+    for i = 0,ord-1 do
+      exp[i] = a
+      log[a] = i
+      -- multiply with generator x+1 -> left shift + 1
+      a = bxor(lshift(a, 1), a)
+      -- if a gets larger than order, reduce modulo irreducible polynom
+      if a > ord then
+        a = sub(a, irrPolynom)
+      end
+    end
+  end
+
+  initMulTable()
+
+  return {
+    add = add,
+    sub = sub,
+    invert = invert,
+    mul = mul,
+    div = div,
+    printLog = printLog,
+    printExp = printExp,
+  }
+  end)
+
+  util=_W(function(_ENV, ...)
+  -- Cache some bit operators
+  local bxor = bit.bxor
+  local rshift = bit.rshift
+  local band = bit.band
+  local lshift = bit.lshift
+  local sleepCheckIn
+  --
+  -- calculate the parity of one byte
+  --
+  local function byteParity(byte)
+    byte = bxor(byte, rshift(byte, 4))
+    byte = bxor(byte, rshift(byte, 2))
+    byte = bxor(byte, rshift(byte, 1))
+    return band(byte, 1)
+  end
+  --
+  -- get byte at position index
+  --
+  local function getByte(number, index)
+    return index == 0 and band(number,0xff) or band(rshift(number, index*8),0xff)
+  end
+  --
+  -- put number into int at position index
+  --
+  local function putByte(number, index)
+    return index == 0 and band(number,0xff) or lshift(band(number,0xff),index*8)
+  end
+  --
+  -- convert byte array to int array
+  --
+  local function bytesToInts(bytes, start, n)
+    local ints = {}
+    for i = 0, n - 1 do
+      ints[i + 1] =
+          putByte(bytes[start + (i*4)], 3) +
+          putByte(bytes[start + (i*4) + 1], 2) +
+          putByte(bytes[start + (i*4) + 2], 1) +
+          putByte(bytes[start + (i*4) + 3], 0)
+      if n % 10000 == 0 then sleepCheckIn() end
+    end
+    return ints
+  end
+  --
+  -- convert int array to byte array
+  --
+  local function intsToBytes(ints, output, outputOffset, n)
+    n = n or #ints
+    for i = 0, n - 1 do
+      for j = 0,3 do
+        output[outputOffset + i*4 + (3 - j)] = getByte(ints[i + 1], j)
+      end
+      if n % 10000 == 0 then sleepCheckIn() end
+    end
+    return output
+  end
+  --
+  -- convert bytes to hexString
+  --
+  local function bytesToHex(bytes)
+    local hexBytes = ""
+    for i,byte in ipairs(bytes) do
+      hexBytes = hexBytes .. string.format("%02x ", byte)
+    end
+    return hexBytes
+  end
+
+  local function hexToBytes(bytes)
+    local out = {}
+    for i = 1, #bytes, 2 do
+      out[#out + 1] = tonumber(bytes:sub(i, i + 1), 16)
+    end
+    return out
+  end
+  --
+  -- convert data to hex string
+  --
+  local function toHexString(data)
+    local type = type(data)
+    if (type == "number") then
+      return string.format("%08x",data)
+    elseif (type == "table") then
+      return bytesToHex(data)
+    elseif (type == "string") then
+      local bytes = {string.byte(data, 1, #data)}
+      return bytesToHex(bytes)
+    else
+      return data
+    end
+  end
+
+  local function padByteString(data)
+    local dataLength = #data
+    local random1 = math.random(0,255)
+    local random2 = math.random(0,255)
+    local prefix = string.char(random1,
+      random2,
+      random1,
+      random2,
+      getByte(dataLength, 3),
+      getByte(dataLength, 2),
+      getByte(dataLength, 1),
+      getByte(dataLength, 0)
+    )
+    data = prefix .. data
+    local padding, paddingLength = "", math.ceil(#data/16)*16 - #data
+    for i=1,paddingLength do
+      padding = padding .. string.char(math.random(0,255))
+    end
+    return data .. padding
+  end
+
+  local function properlyDecrypted(data)
+    local random = {string.byte(data,1,4)}
+    if (random[1] == random[3] and random[2] == random[4]) then
+      return true
+    end
+    return false
+  end
+
+  local function unpadByteString(data)
+    if (not properlyDecrypted(data)) then
+      return nil
+    end
+    local dataLength = putByte(string.byte(data,5), 3)
+             + putByte(string.byte(data,6), 2)
+             + putByte(string.byte(data,7), 1)
+             + putByte(string.byte(data,8), 0)
+    return string.sub(data,9,8+dataLength)
+  end
+
+  local function xorIV(data, iv)
+    for i = 1,16 do
+      data[i] = bxor(data[i], iv[i])
+    end
+  end
+
+  local function increment(data)
+    local i = 16
+    while true do
+      local value = data[i] + 1
+      if value >= 256 then
+        data[i] = value - 256
+        i = (i - 2) % 16 + 1
+      else
+        data[i] = value
+        break
+      end
+    end
+  end
+
+  -- Called every encryption cycle
+  local push, pull, time = os.queueEvent, coroutine.yield, os.time
+  local oldTime = time()
+  local function sleepCheckIn()
+    local newTime = time()
+    if newTime - oldTime >= 0.03 then -- (0.020 * 1.5)
+      oldTime = newTime
+      push("sleep")
+      pull("sleep")
+    end
+  end
+
+  local function getRandomData(bytes)
+    local char, random, sleep, insert = string.char, math.random, sleepCheckIn, table.insert
+    local result = {}
+    for i=1,bytes do
+      insert(result, random(0,255))
+      if i % 10240 == 0 then sleep() end
+    end
+    return result
+  end
+
+  local function getRandomString(bytes)
+    local char, random, sleep, insert = string.char, math.random, sleepCheckIn, table.insert
+    local result = {}
+    for i=1,bytes do
+      insert(result, char(random(0,255)))
+      if i % 10240 == 0 then sleep() end
+    end
+    return table.concat(result)
+  end
+
+  return {
+    byteParity = byteParity,
+    getByte = getByte,
+    putByte = putByte,
+    bytesToInts = bytesToInts,
+    intsToBytes = intsToBytes,
+    bytesToHex = bytesToHex,
+    hexToBytes = hexToBytes,
+    toHexString = toHexString,
+    padByteString = padByteString,
+    properlyDecrypted = properlyDecrypted,
+    unpadByteString = unpadByteString,
+    xorIV = xorIV,
+    increment = increment,
+    sleepCheckIn = sleepCheckIn,
+    getRandomData = getRandomData,
+    getRandomString = getRandomString,
+  }
+  end)
+
+  aes=_W(function(_ENV, ...)
+  -- Implementation of AES with nearly pure lua
+  -- AES with lua is slow, really slow :-)
+  local putByte = util.putByte
+  local getByte = util.getByte
+  -- some constants
+  local ROUNDS = 'rounds'
+  local KEY_TYPE = "type"
+  local ENCRYPTION_KEY=1
+  local DECRYPTION_KEY=2
+  -- aes SBOX
+  local SBox = {}
+  local iSBox = {}
+  -- aes tables
+  local table0 = {}
+  local table1 = {}
+  local table2 = {}
+  local table3 = {}
+  local tableInv0 = {}
+  local tableInv1 = {}
+  local tableInv2 = {}
+  local tableInv3 = {}
+  -- round constants
+  local rCon = {
+    0x01000000,
+    0x02000000,
+    0x04000000,
+    0x08000000,
+    0x10000000,
+    0x20000000,
+    0x40000000,
+    0x80000000,
+    0x1b000000,
+    0x36000000,
+    0x6c000000,
+    0xd8000000,
+    0xab000000,
+    0x4d000000,
+    0x9a000000,
+    0x2f000000,
+  }
+  --
+  -- affine transformation for calculating the S-Box of AES
+  --
+  local function affinMap(byte)
+    mask = 0xf8
+    result = 0
+    for i = 1,8 do
+      result = bit.lshift(result,1)
+      parity = util.byteParity(bit.band(byte,mask))
+      result = result + parity
+      -- simulate roll
+      lastbit = bit.band(mask, 1)
+      mask = bit.band(bit.rshift(mask, 1),0xff)
+      mask = lastbit ~= 0 and bit.bor(mask, 0x80) or bit.band(mask, 0x7f) 
+    end
+    return bit.bxor(result, 0x63)
+  end
+  --
+  -- calculate S-Box and inverse S-Box of AES
+  -- apply affine transformation to inverse in finite field 2^8
+  --
+  local function calcSBox()
+    for i = 0, 255 do
+      inverse = i ~= 0 and gf.invert(i) or i
+      mapped = affinMap(inverse)
+      SBox[i] = mapped
+      iSBox[mapped] = i
+    end
+  end
+  --
+  -- Calculate round tables
+  -- round tables are used to calculate shiftRow, MixColumn and SubBytes
+  -- with 4 table lookups and 4 xor operations.
+  --
+  local function calcRoundTables()
+    for x = 0,255 do
+      byte = SBox[x]
+      table0[x] = putByte(gf.mul(0x03, byte), 0)
+                + putByte(             byte , 1)
+                + putByte(             byte , 2)
+                + putByte(gf.mul(0x02, byte), 3)
+      table1[x] = putByte(             byte , 0)
+                + putByte(             byte , 1)
+                + putByte(gf.mul(0x02, byte), 2)
+                + putByte(gf.mul(0x03, byte), 3)
+      table2[x] = putByte(             byte , 0)
+                + putByte(gf.mul(0x02, byte), 1)
+                + putByte(gf.mul(0x03, byte), 2)
+                + putByte(             byte , 3)
+      table3[x] = putByte(gf.mul(0x02, byte), 0)
+                + putByte(gf.mul(0x03, byte), 1)
+                + putByte(             byte , 2)
+                + putByte(             byte , 3)
+    end
+  end
+  --
+  -- Calculate inverse round tables
+  -- does the inverse of the normal roundtables for the equivalent
+  -- decryption algorithm.
+  --
+  local function calcInvRoundTables()
+    for x = 0,255 do
+      byte = iSBox[x]
+      tableInv0[x] = putByte(gf.mul(0x0b, byte), 0)
+                 + putByte(gf.mul(0x0d, byte), 1)
+                 + putByte(gf.mul(0x09, byte), 2)
+                 + putByte(gf.mul(0x0e, byte), 3)
+      tableInv1[x] = putByte(gf.mul(0x0d, byte), 0)
+                 + putByte(gf.mul(0x09, byte), 1)
+                 + putByte(gf.mul(0x0e, byte), 2)
+                 + putByte(gf.mul(0x0b, byte), 3)
+      tableInv2[x] = putByte(gf.mul(0x09, byte), 0)
+                 + putByte(gf.mul(0x0e, byte), 1)
+                 + putByte(gf.mul(0x0b, byte), 2)
+                 + putByte(gf.mul(0x0d, byte), 3)
+      tableInv3[x] = putByte(gf.mul(0x0e, byte), 0)
+                 + putByte(gf.mul(0x0b, byte), 1)
+                 + putByte(gf.mul(0x0d, byte), 2)
+                 + putByte(gf.mul(0x09, byte), 3)
+    end
+  end
+  --
+  -- rotate word: 0xaabbccdd gets 0xbbccddaa
+  -- used for key schedule
+  --
+  local function rotWord(word)
+    local tmp = bit.band(word,0xff000000)
+    return (bit.lshift(word,8) + bit.rshift(tmp,24))
+  end
+  --
+  -- replace all bytes in a word with the SBox.
+  -- used for key schedule
+  --
+  local function subWord(word)
+    return putByte(SBox[getByte(word,0)],0)
+      + putByte(SBox[getByte(word,1)],1)
+      + putByte(SBox[getByte(word,2)],2)
+      + putByte(SBox[getByte(word,3)],3)
+  end
+  --
+  -- generate key schedule for aes encryption
+  --
+  -- returns table with all round keys and
+  -- the necessary number of rounds saved in [ROUNDS]
+  --
+  local function expandEncryptionKey(key)
+    local keySchedule = {}
+    local keyWords = math.floor(#key / 4)
+    if ((keyWords ~= 4 and keyWords ~= 6 and keyWords ~= 8) or (keyWords * 4 ~= #key)) then
+      error("Invalid key size: " .. tostring(keyWords))
+      return nil
+    end
+    keySchedule[ROUNDS] = keyWords + 6
+    keySchedule[KEY_TYPE] = ENCRYPTION_KEY
+    for i = 0,keyWords - 1 do
+      keySchedule[i] = putByte(key[i*4+1], 3)
+               + putByte(key[i*4+2], 2)
+               + putByte(key[i*4+3], 1)
+               + putByte(key[i*4+4], 0)
+    end
+    for i = keyWords, (keySchedule[ROUNDS] + 1)*4 - 1 do
+      local tmp = keySchedule[i-1]
+      if ( i % keyWords == 0) then
+        tmp = rotWord(tmp)
+        tmp = subWord(tmp)
+        local index = math.floor(i/keyWords)
+        tmp = bit.bxor(tmp,rCon[index])
+      elseif (keyWords > 6 and i % keyWords == 4) then
+        tmp = subWord(tmp)
+      end
+      keySchedule[i] = bit.bxor(keySchedule[(i-keyWords)],tmp)
+    end
+    return keySchedule
+  end
+  --
+  -- Inverse mix column
+  -- used for key schedule of decryption key
+  --
+  local function invMixColumnOld(word)
+    local b0 = getByte(word,3)
+    local b1 = getByte(word,2)
+    local b2 = getByte(word,1)
+    local b3 = getByte(word,0)
+    return putByte(gf.add(gf.add(gf.add(gf.mul(0x0b, b1),
+                         gf.mul(0x0d, b2)),
+                         gf.mul(0x09, b3)),
+                         gf.mul(0x0e, b0)),3)
+       + putByte(gf.add(gf.add(gf.add(gf.mul(0x0b, b2),
+                         gf.mul(0x0d, b3)),
+                         gf.mul(0x09, b0)),
+                         gf.mul(0x0e, b1)),2)
+       + putByte(gf.add(gf.add(gf.add(gf.mul(0x0b, b3),
+                         gf.mul(0x0d, b0)),
+                         gf.mul(0x09, b1)),
+                         gf.mul(0x0e, b2)),1)
+       + putByte(gf.add(gf.add(gf.add(gf.mul(0x0b, b0),
+                         gf.mul(0x0d, b1)),
+                         gf.mul(0x09, b2)),
+                         gf.mul(0x0e, b3)),0)
+  end
+  --
+  -- Optimized inverse mix column
+  -- look at http://fp.gladman.plus.com/cryptography_technology/rijndael/aes.spec.311.pdf
+  -- TODO: make it work
+  --
+  local function invMixColumn(word)
+    local b0 = getByte(word,3)
+    local b1 = getByte(word,2)
+    local b2 = getByte(word,1)
+    local b3 = getByte(word,0)
+    local t = bit.bxor(b3,b2)
+    local u = bit.bxor(b1,b0)
+    local v = bit.bxor(t,u)
+    v = bit.bxor(v,gf.mul(0x08,v))
+    w = bit.bxor(v,gf.mul(0x04, bit.bxor(b2,b0)))
+    v = bit.bxor(v,gf.mul(0x04, bit.bxor(b3,b1)))
+    return putByte( bit.bxor(bit.bxor(b3,v), gf.mul(0x02, bit.bxor(b0,b3))), 0)
+       + putByte( bit.bxor(bit.bxor(b2,w), gf.mul(0x02, t              )), 1)
+       + putByte( bit.bxor(bit.bxor(b1,v), gf.mul(0x02, bit.bxor(b0,b3))), 2)
+       + putByte( bit.bxor(bit.bxor(b0,w), gf.mul(0x02, u              )), 3)
+  end
+  --
+  -- generate key schedule for aes decryption
+  --
+  -- uses key schedule for aes encryption and transforms each
+  -- key by inverse mix column.
+  --
+  local function expandDecryptionKey(key)
+    local keySchedule = expandEncryptionKey(key)
+    if (keySchedule == nil) then
+      return nil
+    end
+    keySchedule[KEY_TYPE] = DECRYPTION_KEY
+    for i = 4, (keySchedule[ROUNDS] + 1)*4 - 5 do
+      keySchedule[i] = invMixColumnOld(keySchedule[i])
+    end
+    return keySchedule
+  end
+  --
+  -- xor round key to state
+  --
+  local function addRoundKey(state, key, round)
+    for i = 0, 3 do
+      state[i + 1] = bit.bxor(state[i + 1], key[round*4+i])
+    end
+  end
+  --
+  -- do encryption round (ShiftRow, SubBytes, MixColumn together)
+  --
+  local function doRound(origState, dstState)
+    dstState[1] =  bit.bxor(bit.bxor(bit.bxor(
+          table0[getByte(origState[1],3)],
+          table1[getByte(origState[2],2)]),
+          table2[getByte(origState[3],1)]),
+          table3[getByte(origState[4],0)])
+    dstState[2] =  bit.bxor(bit.bxor(bit.bxor(
+          table0[getByte(origState[2],3)],
+          table1[getByte(origState[3],2)]),
+          table2[getByte(origState[4],1)]),
+          table3[getByte(origState[1],0)])
+    dstState[3] =  bit.bxor(bit.bxor(bit.bxor(
+          table0[getByte(origState[3],3)],
+          table1[getByte(origState[4],2)]),
+          table2[getByte(origState[1],1)]),
+          table3[getByte(origState[2],0)])
+    dstState[4] =  bit.bxor(bit.bxor(bit.bxor(
+          table0[getByte(origState[4],3)],
+          table1[getByte(origState[1],2)]),
+          table2[getByte(origState[2],1)]),
+          table3[getByte(origState[3],0)])
+  end
+  --
+  -- do last encryption round (ShiftRow and SubBytes)
+  --
+  local function doLastRound(origState, dstState)
+    dstState[1] = putByte(SBox[getByte(origState[1],3)], 3)
+          + putByte(SBox[getByte(origState[2],2)], 2)
+          + putByte(SBox[getByte(origState[3],1)], 1)
+          + putByte(SBox[getByte(origState[4],0)], 0)
+    dstState[2] = putByte(SBox[getByte(origState[2],3)], 3)
+          + putByte(SBox[getByte(origState[3],2)], 2)
+          + putByte(SBox[getByte(origState[4],1)], 1)
+          + putByte(SBox[getByte(origState[1],0)], 0)
+    dstState[3] = putByte(SBox[getByte(origState[3],3)], 3)
+          + putByte(SBox[getByte(origState[4],2)], 2)
+          + putByte(SBox[getByte(origState[1],1)], 1)
+          + putByte(SBox[getByte(origState[2],0)], 0)
+    dstState[4] = putByte(SBox[getByte(origState[4],3)], 3)
+          + putByte(SBox[getByte(origState[1],2)], 2)
+          + putByte(SBox[getByte(origState[2],1)], 1)
+          + putByte(SBox[getByte(origState[3],0)], 0)
+  end
+  --
+  -- do decryption round
+  --
+  local function doInvRound(origState, dstState)
+    dstState[1] =  bit.bxor(bit.bxor(bit.bxor(
+          tableInv0[getByte(origState[1],3)],
+          tableInv1[getByte(origState[4],2)]),
+          tableInv2[getByte(origState[3],1)]),
+          tableInv3[getByte(origState[2],0)])
+    dstState[2] =  bit.bxor(bit.bxor(bit.bxor(
+          tableInv0[getByte(origState[2],3)],
+          tableInv1[getByte(origState[1],2)]),
+          tableInv2[getByte(origState[4],1)]),
+          tableInv3[getByte(origState[3],0)])
+    dstState[3] =  bit.bxor(bit.bxor(bit.bxor(
+          tableInv0[getByte(origState[3],3)],
+          tableInv1[getByte(origState[2],2)]),
+          tableInv2[getByte(origState[1],1)]),
+          tableInv3[getByte(origState[4],0)])
+    dstState[4] =  bit.bxor(bit.bxor(bit.bxor(
+          tableInv0[getByte(origState[4],3)],
+          tableInv1[getByte(origState[3],2)]),
+          tableInv2[getByte(origState[2],1)]),
+          tableInv3[getByte(origState[1],0)])
+  end
+  --
+  -- do last decryption round
+  --
+  local function doInvLastRound(origState, dstState)
+    dstState[1] = putByte(iSBox[getByte(origState[1],3)], 3)
+          + putByte(iSBox[getByte(origState[4],2)], 2)
+          + putByte(iSBox[getByte(origState[3],1)], 1)
+          + putByte(iSBox[getByte(origState[2],0)], 0)
+    dstState[2] = putByte(iSBox[getByte(origState[2],3)], 3)
+          + putByte(iSBox[getByte(origState[1],2)], 2)
+          + putByte(iSBox[getByte(origState[4],1)], 1)
+          + putByte(iSBox[getByte(origState[3],0)], 0)
+    dstState[3] = putByte(iSBox[getByte(origState[3],3)], 3)
+          + putByte(iSBox[getByte(origState[2],2)], 2)
+          + putByte(iSBox[getByte(origState[1],1)], 1)
+          + putByte(iSBox[getByte(origState[4],0)], 0)
+    dstState[4] = putByte(iSBox[getByte(origState[4],3)], 3)
+          + putByte(iSBox[getByte(origState[3],2)], 2)
+          + putByte(iSBox[getByte(origState[2],1)], 1)
+          + putByte(iSBox[getByte(origState[1],0)], 0)
+  end
+  --
+  -- encrypts 16 Bytes
+  -- key           encryption key schedule
+  -- input         array with input data
+  -- inputOffset   start index for input
+  -- output        array for encrypted data
+  -- outputOffset  start index for output
+  --
+  local function encrypt(key, input, inputOffset, output, outputOffset)
+    --default parameters
+    inputOffset = inputOffset or 1
+    output = output or {}
+    outputOffset = outputOffset or 1
+    local state = {}
+    local tmpState = {}
+    if (key[KEY_TYPE] ~= ENCRYPTION_KEY) then
+      error("No encryption key: " .. tostring(key[KEY_TYPE]) .. ", expected " .. ENCRYPTION_KEY)
+      return
+    end
+    state = util.bytesToInts(input, inputOffset, 4)
+    addRoundKey(state, key, 0)
+    local round = 1
+    while (round < key[ROUNDS] - 1) do
+      -- do a double round to save temporary assignments
+      doRound(state, tmpState)
+      addRoundKey(tmpState, key, round)
+      round = round + 1
+      doRound(tmpState, state)
+      addRoundKey(state, key, round)
+      round = round + 1
+    end
+    doRound(state, tmpState)
+    addRoundKey(tmpState, key, round)
+    round = round +1
+    doLastRound(tmpState, state)
+    addRoundKey(state, key, round)
+    util.sleepCheckIn()
+    return util.intsToBytes(state, output, outputOffset)
+  end
+  --
+  -- decrypt 16 bytes
+  -- key           decryption key schedule
+  -- input         array with input data
+  -- inputOffset   start index for input
+  -- output        array for decrypted data
+  -- outputOffset  start index for output
+  ---
+  local function decrypt(key, input, inputOffset, output, outputOffset)
+    -- default arguments
+    inputOffset = inputOffset or 1
+    output = output or {}
+    outputOffset = outputOffset or 1
+    local state = {}
+    local tmpState = {}
+    if (key[KEY_TYPE] ~= DECRYPTION_KEY) then
+      error("No decryption key: " .. tostring(key[KEY_TYPE]))
+      return
+    end
+    state = util.bytesToInts(input, inputOffset, 4)
+    addRoundKey(state, key, key[ROUNDS])
+    local round = key[ROUNDS] - 1
+    while (round > 2) do
+      -- do a double round to save temporary assignments
+      doInvRound(state, tmpState)
+      addRoundKey(tmpState, key, round)
+      round = round - 1
+      doInvRound(tmpState, state)
+      addRoundKey(state, key, round)
+      round = round - 1
+    end
+    doInvRound(state, tmpState)
+    addRoundKey(tmpState, key, round)
+    round = round - 1
+    doInvLastRound(tmpState, state)
+    addRoundKey(state, key, round)
+    util.sleepCheckIn()
+    return util.intsToBytes(state, output, outputOffset)
+  end
+
+  -- calculate all tables when loading this file
+  calcSBox()
+  calcRoundTables()
+  calcInvRoundTables()
+
+  return {
+    ROUNDS = ROUNDS,
+    KEY_TYPE = KEY_TYPE,
+    ENCRYPTION_KEY = ENCRYPTION_KEY,
+    DECRYPTION_KEY = DECRYPTION_KEY,
+    expandEncryptionKey = expandEncryptionKey,
+    expandDecryptionKey = expandDecryptionKey,
+    encrypt = encrypt,
+    decrypt = decrypt,
+  }
+  end)
+
+  local buffer=_W(function(_ENV, ...)
+  local function new ()
+    return {}
+  end
+
+  local function addString (stack, s)
+    table.insert(stack, s)
+  end
+
+  local function toString (stack)
+    return table.concat(stack)
+  end
+
+  return {
+    new = new,
+    addString = addString,
+    toString = toString,
+  }
+  end)
+
+  ciphermode=_W(function(_ENV, ...)
+  local public = {}
+  --
+  -- Encrypt strings
+  -- key - byte array with key
+  -- string - string to encrypt
+  -- modefunction - function for cipher mode to use
+  --
+  local random, unpack = math.random, unpack or table.unpack
+  function public.encryptString(key, data, modeFunction, iv)
+    if iv then
+      local ivCopy = {}
+      for i = 1, 16 do ivCopy[i] = iv[i] end
+      iv = ivCopy
+    else
+      iv = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}
+    end
+    local keySched = aes.expandEncryptionKey(key)
+    local encryptedData = buffer.new()
+    for i = 1, #data/16 do
+      local offset = (i-1)*16 + 1
+      local byteData = {string.byte(data,offset,offset +15)}
+      iv = modeFunction(keySched, byteData, iv)
+      buffer.addString(encryptedData, string.char(unpack(byteData)))
+    end
+    return buffer.toString(encryptedData)
+  end
+  --
+  -- the following 4 functions can be used as
+  -- modefunction for encryptString
+  --
+  -- Electronic code book mode encrypt function
+  function public.encryptECB(keySched, byteData, iv)
+    aes.encrypt(keySched, byteData, 1, byteData, 1)
+  end
+
+  -- Cipher block chaining mode encrypt function
+  function public.encryptCBC(keySched, byteData, iv)
+    util.xorIV(byteData, iv)
+    aes.encrypt(keySched, byteData, 1, byteData, 1)
+    return byteData
+  end
+
+  -- Output feedback mode encrypt function
+  function public.encryptOFB(keySched, byteData, iv)
+    aes.encrypt(keySched, iv, 1, iv, 1)
+    util.xorIV(byteData, iv)
+    return iv
+  end
+
+  -- Cipher feedback mode encrypt function
+  function public.encryptCFB(keySched, byteData, iv)
+    aes.encrypt(keySched, iv, 1, iv, 1)
+    util.xorIV(byteData, iv)
+    return byteData
+  end
+
+  function public.encryptCTR(keySched, byteData, iv)
+    local nextIV = {}
+    for j = 1, 16 do nextIV[j] = iv[j] end
+    aes.encrypt(keySched, iv, 1, iv, 1)
+    util.xorIV(byteData, iv)
+    util.increment(nextIV)
+    return nextIV
+  end
+  --
+  -- Decrypt strings
+  -- key - byte array with key
+  -- string - string to decrypt
+  -- modefunction - function for cipher mode to use
+  --
+  function public.decryptString(key, data, modeFunction, iv)
+    if iv then
+      local ivCopy = {}
+      for i = 1, 16 do ivCopy[i] = iv[i] end
+      iv = ivCopy
+    else
+      iv = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}
+    end
+    local keySched
+    if modeFunction == public.decryptOFB or modeFunction == public.decryptCFB or modeFunction == public.decryptCTR then
+      keySched = aes.expandEncryptionKey(key)
+    else
+      keySched = aes.expandDecryptionKey(key)
+    end
+    local decryptedData = buffer.new()
+    for i = 1, #data/16 do
+      local offset = (i-1)*16 + 1
+      local byteData = {string.byte(data,offset,offset +15)}
+      iv = modeFunction(keySched, byteData, iv)
+      buffer.addString(decryptedData, string.char(unpack(byteData)))
+    end
+    return buffer.toString(decryptedData)
+  end
+  --
+  -- the following 4 functions can be used as
+  -- modefunction for decryptString
+  --
+  -- Electronic code book mode decrypt function
+  function public.decryptECB(keySched, byteData, iv)
+    aes.decrypt(keySched, byteData, 1, byteData, 1)
+    return iv
+  end
+
+  -- Cipher block chaining mode decrypt function
+  function public.decryptCBC(keySched, byteData, iv)
+    local nextIV = {}
+    for j = 1, 16 do nextIV[j] = byteData[j] end
+    aes.decrypt(keySched, byteData, 1, byteData, 1)
+    util.xorIV(byteData, iv)
+    return nextIV
+  end
+
+  -- Output feedback mode decrypt function
+  function public.decryptOFB(keySched, byteData, iv)
+    aes.encrypt(keySched, iv, 1, iv, 1)
+    util.xorIV(byteData, iv)
+    return iv
+  end
+
+  -- Cipher feedback mode decrypt function
+  function public.decryptCFB(keySched, byteData, iv)
+    local nextIV = {}
+    for j = 1, 16 do nextIV[j] = byteData[j] end
+    aes.encrypt(keySched, iv, 1, iv, 1)
+    util.xorIV(byteData, iv)
+    return nextIV
+  end
+
+  public.decryptCTR = public.encryptCTR
+  return public
+  end)
+
+  -- Simple API for encrypting strings.
+  --
+  AES128 = 16
+  AES192 = 24
+  AES256 = 32
+  ECBMODE = 1
+  CBCMODE = 2
+  OFBMODE = 3
+  CFBMODE = 4
+  CTRMODE = 4
+
+  local function pwToKey(password, keyLength, iv)
+    local padLength = keyLength
+    if (keyLength == AES192) then
+      padLength = 32
+    end
+    if (padLength > #password) then
+      local postfix = ""
+      for i = 1,padLength - #password do
+        postfix = postfix .. string.char(0)
+      end
+      password = password .. postfix
+    else
+      password = string.sub(password, 1, padLength)
+    end
+    local pwBytes = {string.byte(password,1,#password)}
+    password = ciphermode.encryptString(pwBytes, password, ciphermode.encryptCBC, iv)
+    password = string.sub(password, 1, keyLength)
+    return {string.byte(password,1,#password)}
+  end
+  --
+  -- Encrypts string data with password password.
+  -- password  - the encryption key is generated from this string
+  -- data      - string to encrypt (must not be too large)
+  -- keyLength - length of aes key: 128(default), 192 or 256 Bit
+  -- mode      - mode of encryption: ecb, cbc(default), ofb, cfb
+  --
+  -- mode and keyLength must be the same for encryption and decryption.
+  --
+  function encrypt(password, data, keyLength, mode, iv)
+    assert(password ~= nil, "Empty password.")
+    assert(data ~= nil, "Empty data.")
+    local mode = mode or CBCMODE
+    local keyLength = keyLength or AES128
+    local key = pwToKey(password, keyLength, iv)
+    local paddedData = util.padByteString(data)
+    if mode == ECBMODE then
+      return ciphermode.encryptString(key, paddedData, ciphermode.encryptECB, iv)
+    elseif mode == CBCMODE then
+      return ciphermode.encryptString(key, paddedData, ciphermode.encryptCBC, iv)
+    elseif mode == OFBMODE then
+      return ciphermode.encryptString(key, paddedData, ciphermode.encryptOFB, iv)
+    elseif mode == CFBMODE then
+      return ciphermode.encryptString(key, paddedData, ciphermode.encryptCFB, iv)
+    elseif mode == CTRMODE then
+      return ciphermode.encryptString(key, paddedData, ciphermode.encryptCTR, iv)
+    else
+      error("Unknown mode", 2)
+    end
+  end
+  --
+  -- Decrypts string data with password password.
+  -- password  - the decryption key is generated from this string
+  -- data      - string to encrypt
+  -- keyLength - length of aes key: 128(default), 192 or 256 Bit
+  -- mode      - mode of decryption: ecb, cbc(default), ofb, cfb
+  --
+  -- mode and keyLength must be the same for encryption and decryption.
+  --
+  function decrypt(password, data, keyLength, mode, iv)
+    local mode = mode or CBCMODE
+    local keyLength = keyLength or AES128
+    local key = pwToKey(password, keyLength, iv)
+    local plain
+    if mode == ECBMODE then
+      plain = ciphermode.decryptString(key, data, ciphermode.decryptECB, iv)
+    elseif mode == CBCMODE then
+      plain = ciphermode.decryptString(key, data, ciphermode.decryptCBC, iv)
+    elseif mode == OFBMODE then
+      plain = ciphermode.decryptString(key, data, ciphermode.decryptOFB, iv)
+    elseif mode == CFBMODE then
+      plain = ciphermode.decryptString(key, data, ciphermode.decryptCFB, iv)
+    elseif mode == CTRMODE then
+      plain = ciphermode.decryptString(key, data, ciphermode.decryptCTR, iv)
+    else
+      error("Unknown mode", 2)
+    end
+    result = util.unpadByteString(plain)
+    if (result == nil) then
+      return nil
+    end
+    return result
+  end
+end
+
+
+
+-- =========================================================
+-- WiRe Sensor Program
+-- Version: 0.1.0-dev
+-- =========================================================
+-- Reads local redstone or an Advanced Peripherals Redstone
+-- Integrator and fires WiRe actions when signal level changes.
+--
+-- Networking/discovery/encryption is intentionally based on
+-- WiRe Trigger so it uses the same WiRe colour/server flow.
+-- =========================================================
 
 local VERSION = "0.1.0-dev"
-local CONFIG_FILE = "/wire/sensor.cfg"
-local DEFAULT_CHANNEL = 65530
-local POLL_DELAY = 0.10
+local CONFIG = "/data/WiRe/sensor.cfg"
+local DISCOVERY_TIMEOUT = 5
+local POLL_TIME = 0.10
+local thisCC = tostring(os.getComputerID())
 
-local SIDES = {"front", "back", "left", "right", "top", "bottom"}
-local ACTIONS = {"open", "close", "toggle", "on", "off", "activate", "deactivate"}
-local TARGET_TYPES = {"device", "group"}
+local cfg, modemSide = nil, nil
 
-local COLOUR_OPTIONS = {
-    {key="w", name="White", code="white"},
-    {key="o", name="Orange", code="orange"},
-    {key="m", name="Magenta", code="magenta"},
-    {key="l", name="Light Blue", code="lightBlue"},
-    {key="y", name="Yellow", code="yellow"},
-    {key="g", name="Lime", code="lime"},
-    {key="p", name="Pink", code="pink"},
-    {key="a", name="Gray", code="gray"},
-    {key="s", name="Light Gray", code="lightGray"},
-    {key="c", name="Cyan", code="cyan"},
-    {key="u", name="Purple", code="purple"},
-    {key="b", name="Blue", code="blue"},
-    {key="r", name="Brown", code="brown"},
-    {key="e", name="Green", code="green"},
-    {key="d", name="Red", code="red"},
-    {key="k", name="Black", code="black"}
+local colorWheel = {
+  P = "Purple", M = "Magenta", B = "Blue", S = "Sky", C = "Cyan",
+  E = "Green", L = "Lime", R = "Red", O = "Orange", Y = "Yellow",
+  N = "Brown", K = "Black", G = "Gray", I = "Silver", W = "White",
 }
 
-local cfg = nil
-
-local function isColour()
-    return term.isColor and term.isColor()
-end
-
-local function setText(c)
-    if isColour() and c then term.setTextColor(c) end
-end
-
-local function setBg(c)
-    if isColour() and c then term.setBackgroundColor(c) end
-end
+local sides = {"front","back","left","right","top","bottom"}
+local actions = {"open","close","toggle","on","off","run"}
 
 local function clear()
-    setBg(colors.black)
-    setText(colors.white)
-    term.clear()
-    term.setCursorPos(1, 1)
+  term.setBackgroundColor(colors.black)
+  term.setTextColor(colors.white)
+  term.clear()
+  term.setCursorPos(1,1)
 end
 
-local function cprint(text, col)
-    setText(col or colors.white)
-    print(text or "")
-    setText(colors.white)
+local function pause()
+  print("")
+  print("Press Enter to continue.")
+  read()
 end
 
-local function writeCentered(y, text, col)
-    local w = term.getSize()
-    term.setCursorPos(math.max(1, math.floor((w - #text) / 2) + 1), y)
-    setText(col or colors.white)
-    write(text)
-    setText(colors.white)
-end
-
-local function header(title, subtitle)
-    clear()
-    local w = term.getSize()
-    setText(colors.purple)
-    print(string.rep("=", w))
-    writeCentered(2, title or "WiRe Sensor", colors.white)
-    setText(colors.purple)
-    print(string.rep("=", w))
-    setText(colors.white)
-    if subtitle and subtitle ~= "" then
-        cprint(subtitle, colors.lightGray)
-        print()
-    else
-        print()
-    end
-end
-
-local function pause(message)
-    print()
-    cprint(message or "Press Enter to continue...", colors.lightGray)
-    read()
-end
-
-local function ask(prompt, default)
-    if default ~= nil and default ~= "" then
-        write(prompt .. " [" .. tostring(default) .. "]: ")
-    else
-        write(prompt .. ": ")
-    end
-    local v = read()
-    if v == "" and default ~= nil then return default end
-    return v
-end
-
-local function askYesNo(question, defaultNo)
-    while true do
-        write(question .. (defaultNo and " [y/N]: " or " [Y/n]: "))
-        local answer = string.lower(read())
-        if answer == "" then return not defaultNo end
-        if answer == "y" or answer == "yes" then return true end
-        if answer == "n" or answer == "no" then return false end
-    end
-end
-
-local function askNumber(prompt, min, max, default)
-    while true do
-        local n = tonumber(ask(prompt, default))
-        if n and n >= min and n <= max then return n end
-        cprint("Enter a number from " .. min .. " to " .. max .. ".", colors.red)
-    end
-end
-
-local function askMenu(title, options, subtitle)
-    while true do
-        header(title, subtitle)
-        for i, item in ipairs(options) do
-            local label = item
-            if type(item) == "table" then label = item.label or item.name or tostring(item[1]) end
-            print(i .. ". " .. label)
-        end
-        print()
-        local n = tonumber(ask("Select"))
-        if n and options[n] then return n, options[n] end
-        cprint("Invalid option.", colors.red)
-        sleep(0.8)
-    end
-end
-
-local function ensureDir(path)
-    local dir = fs.getDir(path)
-    if dir ~= "" and not fs.exists(dir) then fs.makeDir(dir) end
+local function ensureDataDir()
+  if not fs.exists("/data") then fs.makeDir("/data") end
+  if not fs.exists("/data/WiRe") then fs.makeDir("/data/WiRe") end
 end
 
 local function saveConfig()
-    ensureDir(CONFIG_FILE)
-    local f = fs.open(CONFIG_FILE, "w")
-    f.write(textutils.serialize(cfg))
-    f.close()
+  ensureDataDir()
+  local f = fs.open(CONFIG, "w")
+  f.write(textutils.serialize(cfg))
+  f.close()
 end
 
 local function loadConfig()
-    if not fs.exists(CONFIG_FILE) then return nil end
-    local f = fs.open(CONFIG_FILE, "r")
-    local data = f.readAll()
-    f.close()
-    local t = textutils.unserialize(data)
-    if type(t) == "table" then return t end
-    return nil
+  if not fs.exists(CONFIG) then return nil end
+  local f = fs.open(CONFIG, "r")
+  local data = f.readAll()
+  f.close()
+  local ok, t = pcall(textutils.unserialize, data)
+  if ok and type(t) == "table" then return t end
+  return nil
 end
 
-local function normaliseColour(name)
-    name = tostring(name or "")
-    name = name:gsub("%s+", "")
-    if name == "lightblue" then return "lightBlue" end
-    if name == "lightgray" or name == "lightgrey" then return "lightGray" end
-    return string.lower(string.sub(name, 1, 1)) .. string.sub(name, 2)
-end
-
-local function colourNameFromCode(code)
-    for _, item in ipairs(COLOUR_OPTIONS) do
-        if item.code == code then return item.name end
+local function findPeripheral(kind)
+  for _, side in ipairs(rs.getSides()) do
+    if peripheral.isPresent(side) and peripheral.getType(side) == kind then
+      return side, peripheral.wrap(side)
     end
-    return tostring(code or "unknown")
+  end
+  for _, name in ipairs(peripheral.getNames()) do
+    if peripheral.getType(name) == kind then
+      return name, peripheral.wrap(name)
+    end
+  end
+  return nil, nil
 end
 
-local function pickColour(default)
-    while true do
-        header("WiRe Sensor Setup", "Choose the WiRe server colour/network this Sensor belongs to.")
-        for i, item in ipairs(COLOUR_OPTIONS) do
-            local marker = (item.code == default) and " *" or ""
-            print(string.format("%2d. %-10s [%s]%s", i, item.name, item.key, marker))
-        end
-        print()
-        cprint("Tip: Purple uses U because Pink uses P.", colors.lightGray)
-        print()
-        write("Colour number/key/name: ")
-        local v = string.lower(read())
+local function openModem()
+  if not modemSide then modemSide = findPeripheral("modem") end
+  if not modemSide then error("No modem found.", 0) end
+  if not rednet.isOpen(modemSide) then rednet.open(modemSide) end
+end
 
-        if v == "" and default then return default end
+local function chooseColor()
+  clear()
+  print("Select WiRe colour/channel")
+  print("--------------------------")
+  print("This colour IS the WiRe server/network.")
+  print("")
+  print("P = Purple    M = Magenta")
+  print("B = Blue      S = Sky")
+  print("C = Cyan      E = Green")
+  print("L = Lime      R = Red")
+  print("O = Orange    Y = Yellow")
+  print("N = Brown     K = Black")
+  print("G = Gray      I = Silver")
+  print("W = White")
+  print("")
+  while true do
+    write("> ")
+    local c = string.upper(read() or "")
+    local chosen = colorWheel[c:sub(1,1)]
+    if chosen then return chosen end
+  end
+end
 
-        local n = tonumber(v)
-        if n and COLOUR_OPTIONS[n] then return COLOUR_OPTIONS[n].code end
+local function updateNetwork()
+  network = "WiRe" .. tostring(cfg.color)
+end
 
-        for _, item in ipairs(COLOUR_OPTIONS) do
-            if v == item.key or v == string.lower(item.name) or v == string.lower(item.code) then
-                return item.code
+local function findServerByColour()
+  openModem()
+  updateNetwork()
+  return rednet.lookup(network, cfg.color)
+end
+
+local function sendEncrypted(packet, targetId)
+  openModem()
+  updateNetwork()
+  packet.program = packet.program or "WiReSensor"
+  packet.cc = tonumber(thisCC)
+  packet.color = cfg.color
+
+  local dataPack = textutils.serialize(packet)
+  local encKey = tostring(targetId or cfg.server) .. "WiRe!Comms" .. thisCC
+  local encryptedPackage = encode(encrypt(encKey, dataPack))
+
+  rednet.send(targetId or cfg.server, encryptedPackage, network)
+end
+
+local function waitForEncryptedResponse(expectedResponse, timeout)
+  updateNetwork()
+  local timer = os.startTimer(timeout or DISCOVERY_TIMEOUT)
+  while true do
+    local event, p1, p2, p3 = os.pullEvent()
+    if event == "rednet_message" then
+      local sender, message, protocol = p1, p2, p3
+      if protocol == network and type(message) == "string" then
+        local ok, decoded = pcall(decode, message)
+        if ok and type(decoded) == "string" then
+          local encKey = thisCC .. "WiRe!Comms" .. tostring(sender)
+          local ok2, plain = pcall(decrypt, encKey, decoded)
+          if ok2 and type(plain) == "string" then
+            local ok3, data = pcall(textutils.unserialize, plain)
+            if ok3 and type(data) == "table" then
+              if data.color == cfg.color and data.response == expectedResponse then
+                data.sender = sender
+                return data
+              end
             end
+          end
         end
-
-        cprint("Unknown colour.", colors.red)
-        sleep(0.8)
+      end
+    elseif event == "timer" and p1 == timer then
+      return nil
     end
+  end
 end
 
-local function getModem()
-    local modem = peripheral.find("modem", function(_, m)
-        return m.isWireless and m.isWireless()
-    end)
-    if modem then return modem end
-    return peripheral.find("modem")
+local function discoverServer()
+  clear()
+  print("Searching WiRe colour:")
+  print(cfg.color)
+  print("")
+  print("Using rednet.lookup...")
+  cfg.server = findServerByColour()
+  if not cfg.server then return nil end
+
+  print("Found server ID: " .. tostring(cfg.server))
+  print("Requesting server info...")
+  sendEncrypted({ request = "SERVERINFO" }, cfg.server)
+  local data = waitForEncryptedResponse("SERVERINFO", DISCOVERY_TIMEOUT)
+
+  if data then
+    cfg.serverName = data.serverName or data.name or ("Server " .. tostring(cfg.server))
+    cfg.serverVersion = data.serverVersion or data.version or "unknown"
+    return data
+  end
+
+  cfg.serverName = "Server " .. tostring(cfg.server)
+  cfg.serverVersion = "unknown"
+  return { sender = cfg.server, name = cfg.serverName, version = cfg.serverVersion }
 end
 
-local function listRedstoneIntegrators()
-    local found = {}
-    for _, name in ipairs(peripheral.getNames()) do
-        local pType = peripheral.getType(name) or ""
-        local p = peripheral.wrap(name)
-        local lowerType = string.lower(pType)
-        local ok = false
-        if string.find(lowerType, "redstone") then ok = true end
-        if p and type(p.getAnalogInput) == "function" then ok = true end
-        if ok then table.insert(found, {name = name, pType = pType}) end
+local function normaliseList(t)
+  local list = {}
+  if type(t) ~= "table" then return list end
+
+  for k, v in pairs(t) do
+    if type(v) == "string" then
+      list[#list + 1] = { id = v, name = v }
+    elseif type(v) == "table" then
+      local id = v.id or v.deviceId or v.name or v.label or tostring(k)
+      local name = v.name or v.label or v.id or tostring(id)
+      list[#list + 1] = { id = tostring(id), name = tostring(name) }
+    else
+      list[#list + 1] = { id = tostring(k), name = tostring(v) }
     end
-    table.sort(found, function(a, b) return a.name < b.name end)
-    return found
+  end
+
+  table.sort(list, function(a,b) return tostring(a.name) < tostring(b.name) end)
+  return list
 end
 
-local function readSignalFromInput(input)
-    if not input then return 0 end
+local function getGroupsFromServer()
+  clear()
+  print("Requesting groups from:")
+  print(cfg.serverName or cfg.color)
+  print("")
+  sendEncrypted({ request = "LISTGROUPS" }, cfg.server)
+  local data = waitForEncryptedResponse("GROUPLIST", DISCOVERY_TIMEOUT)
+  if not data or type(data.groups) ~= "table" then return nil end
 
-    if input.mode == "local" then
-        return redstone.getAnalogInput(input.side) or 0
+  local list = {}
+  for _, g in ipairs(data.groups) do
+    list[#list + 1] = { id = tostring(g), name = tostring(g) }
+  end
+  table.sort(list, function(a,b) return a.name < b.name end)
+  return list
+end
+
+local function getDevicesFromServer()
+  clear()
+  print("Requesting devices from:")
+  print(cfg.serverName or cfg.color)
+  print("")
+
+  -- First try the likely WiRe+ request/response pair.
+  sendEncrypted({ request = "LISTDEVICES" }, cfg.server)
+  local data = waitForEncryptedResponse("DEVICELIST", DISCOVERY_TIMEOUT)
+  if data and type(data.devices) == "table" then
+    return normaliseList(data.devices)
+  end
+
+  -- Fallback names for newer tablet/server APIs.
+  sendEncrypted({ request = "DEVICE_LIST" }, cfg.server)
+  data = waitForEncryptedResponse("DEVICE_LIST", DISCOVERY_TIMEOUT)
+  if data and type(data.devices) == "table" then
+    return normaliseList(data.devices)
+  end
+
+  return nil
+end
+
+local function sendGroupAction(groupName, action)
+  -- Existing Trigger-compatible group fire.
+  if not action or action == "run" then
+    sendEncrypted({ group = groupName }, cfg.server)
+  else
+    sendEncrypted({ group = groupName, action = action }, cfg.server)
+  end
+end
+
+local function sendDeviceAction(deviceId, action)
+  sendEncrypted({ device = deviceId, action = action }, cfg.server)
+end
+
+local function chooseFromList(title, list)
+  if not list or #list == 0 then return nil end
+  local index = 1
+  while true do
+    clear()
+    print(title)
+    print(string.rep("-", #title))
+    print("N = Next    P = Previous")
+    print("S = Select  Q = Cancel")
+    print("")
+    local item = list[index]
+    print(tostring(index) .. "/" .. tostring(#list))
+    print(item.name)
+    if item.id ~= item.name then print("ID: " .. tostring(item.id)) end
+    print("")
+    write("> ")
+    local c = string.lower(read() or "")
+    if c == "n" then
+      index = index + 1
+      if index > #list then index = 1 end
+    elseif c == "p" then
+      index = index - 1
+      if index < 1 then index = #list end
+    elseif c == "s" then
+      return item
+    elseif c == "q" then
+      return nil
+    end
+  end
+end
+
+local function chooseAction()
+  local index = 1
+  while true do
+    clear()
+    print("Select Action")
+    print("-------------")
+    for i, a in ipairs(actions) do
+      print((i == index and "> " or "  ") .. tostring(i) .. ". " .. a)
+    end
+    print("")
+    print("N/P = Move, S = Select")
+    write("> ")
+    local c = string.lower(read() or "")
+    if c == "n" then index = index + 1; if index > #actions then index = 1 end
+    elseif c == "p" then index = index - 1; if index < 1 then index = #actions end
+    elseif c == "s" then return actions[index]
+    else
+      local n = tonumber(c)
+      if n and actions[n] then return actions[n] end
+    end
+  end
+end
+
+local function manualTarget(targetType)
+  clear()
+  print("Manual " .. targetType .. " entry")
+  print("----------------------")
+  print("Type exact target name or ID.")
+  print("")
+  write("> ")
+  local v = read()
+  if not v or v == "" then return nil end
+  return { id = v, name = v }
+end
+
+local function configureLevel(level)
+  cfg.events = cfg.events or {}
+  while true do
+    clear()
+    print("Redstone Level " .. tostring(level))
+    print("----------------")
+    local current = cfg.events[level]
+    if current then
+      print("Current:")
+      print(current.targetType .. ": " .. tostring(current.targetName or current.target))
+      print("Action: " .. tostring(current.action))
+      print("")
+      print("1. Change action")
+      print("2. Disable this level")
+      print("3. Back")
+    else
+      print("Current: Disabled")
+      print("")
+      print("1. Add action")
+      print("2. Back")
+    end
+    print("")
+    write("> ")
+    local c = read() or ""
+
+    if not current then
+      if c == "1" then
+        -- continue below
+      elseif c == "2" then
+        return
+      else
+        -- invalid
+        sleep(0.5)
+        goto continue
+      end
+    else
+      if c == "1" then
+        -- continue below
+      elseif c == "2" then
+        cfg.events[level] = nil
+        saveConfig()
+        return
+      elseif c == "3" then
+        return
+      else
+        sleep(0.5)
+        goto continue
+      end
     end
 
-    if input.mode == "integrator" then
-        local p = peripheral.wrap(input.peripheral)
-        if not p then return 0 end
+    clear()
+    print("Target Type")
+    print("-----------")
+    print("1. Device")
+    print("2. Group")
+    print("")
+    write("> ")
+    local t = read()
+    local targetType = nil
+    if t == "1" then targetType = "device"
+    elseif t == "2" then targetType = "group"
+    else goto continue end
 
-        if type(p.getAnalogInput) == "function" then
-            local ok, value = pcall(p.getAnalogInput, input.side)
-            if ok and type(value) == "number" then return math.max(0, math.min(15, value)) end
-        end
-
-        if type(p.getInput) == "function" then
-            local ok, value = pcall(p.getInput, input.side)
-            if ok then return value and 15 or 0 end
-        end
+    local list = nil
+    if targetType == "group" then
+      list = getGroupsFromServer()
+    else
+      list = getDevicesFromServer()
     end
 
-    return 0
-end
-
-local function readSignal()
-    if not cfg then return 0 end
-    return readSignalFromInput(cfg.input)
-end
-
-local function setupIntro()
-    header("WiRe Sensor Setup", "Wireless redstone input monitor")
-    cprint("This setup will create one WiRe Sensor.", colors.white)
-    print()
-    print("A Sensor watches one redstone input and sends an event")
-    print("to the WiRe Server when the signal level changes.")
-    print()
-    cprint("No event set for a level = that level is disabled.", colors.lightGray)
-    pause()
-end
-
-local function setupIdentity(existing)
-    header("WiRe Sensor Setup", "Sensor identity")
-    print("Short name, max 12 chars.")
-    print("Example: GATE-SENS")
-    print()
-    local shortName = ask("Short name", existing and existing.shortName or nil)
-    while shortName == "" do
-        cprint("Short name cannot be empty.", colors.red)
-        shortName = ask("Short name")
-    end
-    shortName = string.sub(shortName, 1, 12)
-
-    header("WiRe Sensor Setup", "Sensor description")
-    print("Long description.")
-    print("Example: Stargate redstone output sensor")
-    print()
-    local description = ask("Description", existing and existing.description or nil)
-    if description == "" then description = shortName end
-
-    return shortName, description
-end
-
-local function setupNetwork(existing)
-    local serverColour = pickColour(existing and existing.serverColour or "purple")
-
-    header("WiRe Sensor Setup", "Network channel")
-    print("Use the same WiRe channel as your server.")
-    print("Leave blank for default unless your WiRe server uses a custom one.")
-    print()
-    local channel = askNumber("WiRe channel", 1, 65535, existing and existing.channel or DEFAULT_CHANNEL)
-    return serverColour, channel
-end
-
-local function pickSide(default)
-    local options = {}
-    for _, s in ipairs(SIDES) do table.insert(options, s) end
-    local idxDefault = nil
-    for i, s in ipairs(SIDES) do if s == default then idxDefault = i end end
-    while true do
-        header("WiRe Sensor Setup", "Choose input side")
-        for i, s in ipairs(SIDES) do
-            local mark = (i == idxDefault) and " *" or ""
-            print(i .. ". " .. s .. mark)
-        end
-        print()
-        local raw = ask("Select", idxDefault)
-        local n = tonumber(raw)
-        if n and SIDES[n] then return SIDES[n] end
-        raw = string.lower(tostring(raw or ""))
-        for _, s in ipairs(SIDES) do if raw == s then return s end end
-    end
-end
-
-local function setupInput(existing)
-    local idx, option = askMenu("WiRe Sensor Setup", {
-        "Local Redstone",
-        "Redstone Integrator / Wired Peripheral"
-    }, "Input mode")
-
-    if idx == 1 then
-        local side = pickSide(existing and existing.input and existing.input.side or "back")
-        return {mode = "local", side = side}
+    local target = nil
+    if list and #list > 0 then
+      target = chooseFromList("Select " .. targetType, list)
+    else
+      clear()
+      print("Could not load " .. targetType .. " list.")
+      print("")
+      print("1. Manual entry")
+      print("2. Cancel")
+      write("> ")
+      if read() == "1" then target = manualTarget(targetType) end
     end
 
-    while true do
-        local found = listRedstoneIntegrators()
-        if #found == 0 then
-            header("WiRe Sensor Setup", "No Redstone Integrator found")
-            cprint("No compatible redstone peripheral was found.", colors.red)
-            print()
-            print("Check that:")
-            print("- The Redstone Integrator is connected with a wired modem.")
-            print("- The wired modem is enabled.")
-            print("- The Sensor computer is on the same wired network.")
-            print()
-            if askYesNo("Retry search?", false) then
-                -- loop
-            else
-                return setupInput(existing)
-            end
-        else
-            local options = {}
-            for _, p in ipairs(found) do
-                table.insert(options, p.name .. " (" .. p.pType .. ")")
-            end
-            local pidx = askMenu("WiRe Sensor Setup", options, "Select Redstone Integrator")
-            local side = pickSide(existing and existing.input and existing.input.side or "back")
-            return {mode = "integrator", peripheral = found[pidx].name, side = side}
-        end
-    end
-end
-
-local function testInput(input)
-    while true do
-        header("WiRe Sensor Setup", "Test input")
-        print("Input Mode : " .. tostring(input.mode))
-        if input.peripheral then print("Peripheral : " .. tostring(input.peripheral)) end
-        print("Side       : " .. tostring(input.side))
-        print()
-        local level = readSignalFromInput(input)
-        cprint("Current Redstone Level: " .. tostring(level), colors.yellow)
-        print()
-        print("Press Enter to refresh.")
-        print("Type C to continue, B to go back.")
-        local v = string.lower(read())
-        if v == "c" or v == "continue" then return true end
-        if v == "b" or v == "back" then return false end
-    end
-end
-
-local function targetTypeLabel(value)
-    if value == "device" then return "Device" end
-    if value == "group" then return "Group" end
-    return tostring(value or "?")
-end
-
-local function eventSummary(level)
-    if not cfg or not cfg.events then return "Disabled" end
-    local event = cfg.events[level]
-    if not event or type(event.actions) ~= "table" or #event.actions == 0 then
-        return "Disabled"
-    end
-    local a = event.actions[1]
-    local text = targetTypeLabel(a.targetType) .. ": " .. tostring(a.target) .. " / " .. tostring(a.command)
-    if #event.actions > 1 then text = text .. " +" .. tostring(#event.actions - 1) end
-    return text
-end
-
-local function addAction(level)
-    local _, targetType = askMenu("Level " .. level, {"device", "group"}, "Action target type")
-
-    header("Level " .. level, "Target")
-    print("Enter the exact WiRe device ID or group name.")
-    print()
-    print("Examples:")
-    print("L28 N-01")
-    print("Security Doors")
-    print()
-    local target = ask("Target")
-    while target == "" do
-        cprint("Target cannot be empty.", colors.red)
-        target = ask("Target")
-    end
-
-    local _, command = askMenu("Level " .. level, ACTIONS, "Action command")
-
-    cfg.events[level] = cfg.events[level] or {actions = {}}
-    table.insert(cfg.events[level].actions, {
+    if target then
+      local action = chooseAction()
+      cfg.events[level] = {
         targetType = targetType,
-        target = target,
-        command = command
-    })
-    saveConfig()
-end
-
-local function editLevel(level)
-    while true do
-        header("WiRe Sensor Events", "Redstone Level " .. tostring(level))
-        print("Current: " .. eventSummary(level))
-        print()
-        if eventSummary(level) == "Disabled" then
-            print("1. Add action")
-            print("2. Back")
-            print()
-            local choice = ask("Select")
-            if choice == "1" then addAction(level)
-            elseif choice == "2" then return end
-        else
-            print("1. Add another action")
-            print("2. Clear / disable this level")
-            print("3. Back")
-            print()
-            local choice = ask("Select")
-            if choice == "1" then
-                addAction(level)
-            elseif choice == "2" then
-                cfg.events[level] = nil
-                saveConfig()
-            elseif choice == "3" then
-                return
-            end
-        end
+        target = target.id,
+        targetName = target.name,
+        action = action
+      }
+      saveConfig()
+      return
     end
+
+    ::continue::
+  end
 end
 
 local function editEvents()
-    while true do
-        header("WiRe Sensor Events", "One event per redstone level")
-        for i = 0, 15 do
-            local summary = eventSummary(i)
-            if summary == "Disabled" then setText(colors.gray) else setText(colors.green) end
-            print(string.format("%2d. %s", i, summary))
-            setText(colors.white)
-        end
-        print()
-        print("Enter level 0-15 to edit, or B to go back.")
-        local choice = string.lower(ask("Level"))
-        if choice == "b" or choice == "back" then return end
-        local n = tonumber(choice)
-        if n and n >= 0 and n <= 15 then editLevel(n) end
+  while true do
+    clear()
+    print("WiRe Sensor Events")
+    print("------------------")
+    print("N = Next page   E = Edit level")
+    print("Q = Back")
+    print("")
+    for level = 0, 15 do
+      local e = cfg.events and cfg.events[level]
+      local status = "Disabled"
+      if e then
+        status = tostring(e.targetType) .. ": " .. tostring(e.targetName or e.target) .. " / " .. tostring(e.action)
+      end
+      print(string.format("%2d  %s", level, status))
     end
+    print("")
+    write("Level 0-15, or Q: ")
+    local c = string.lower(read() or "")
+    if c == "q" then return end
+    local n = tonumber(c)
+    if n and n >= 0 and n <= 15 then
+      configureLevel(n)
+    end
+  end
 end
 
-local function newConfig(existing)
-    setupIntro()
-    local shortName, description = setupIdentity(existing)
-    local serverColour, channel = setupNetwork(existing)
+local function findRedstoneIntegrators()
+  local list = {}
+  for _, name in ipairs(peripheral.getNames()) do
+    local t = peripheral.getType(name) or ""
+    local lowName = string.lower(name)
+    local lowType = string.lower(t)
+    if (string.find(lowName, "redstone", 1, true) and string.find(lowName, "integrator", 1, true))
+      or (string.find(lowType, "redstone", 1, true) and string.find(lowType, "integrator", 1, true)) then
+      list[#list + 1] = { id = name, name = name .. " / " .. t }
+    end
+  end
+  table.sort(list, function(a,b) return a.id < b.id end)
+  return list
+end
 
-    local input
-    while true do
-        input = setupInput(existing)
-        if testInput(input) then break end
+local function chooseSide()
+  while true do
+    clear()
+    print("Select Input Side")
+    print("-----------------")
+    for i, s in ipairs(sides) do print(tostring(i) .. ". " .. s) end
+    print("")
+    write("> ")
+    local c = string.lower(read() or "")
+    local n = tonumber(c)
+    if n and sides[n] then return sides[n] end
+    for _, s in ipairs(sides) do if c == s then return s end end
+  end
+end
+
+local function readSignal()
+  if not cfg then return 0 end
+  local side = cfg.inputSide or "back"
+
+  if cfg.inputMode == "local" then
+    local ok, v = pcall(redstone.getAnalogInput, side)
+    if ok and type(v) == "number" then return v end
+    return 0
+  end
+
+  if cfg.inputMode == "integrator" then
+    local p = peripheral.wrap(cfg.peripheralName or "")
+    if not p then return 0 end
+
+    if p.getAnalogInput then
+      local ok, v = pcall(p.getAnalogInput, side)
+      if ok and type(v) == "number" and v > 0 then return v end
     end
 
-    cfg = {
-        version = VERSION,
-        shortName = shortName,
-        description = description,
-        serverColour = serverColour,
-        channel = channel,
-        input = input,
-        events = existing and existing.events or {}
-    }
-
-    saveConfig()
-
-    header("WiRe Sensor Setup", "Setup complete")
-    print("Short Name : " .. cfg.shortName)
-    print("Description: " .. cfg.description)
-    print("Server     : " .. colourNameFromCode(cfg.serverColour))
-    print("Channel    : " .. tostring(cfg.channel))
-    print("Input      : " .. cfg.input.mode .. " / " .. tostring(cfg.input.side))
-    if cfg.input.peripheral then print("Peripheral : " .. tostring(cfg.input.peripheral)) end
-    print()
-    if askYesNo("Configure redstone level events now?", false) then
-        editEvents()
-    end
-end
-
-local function sendToServer(packet)
-    local modem = getModem()
-    if not modem then
-        return false, "No modem found"
+    if p.getAnalogOutput then
+      local ok, v = pcall(p.getAnalogOutput, side)
+      if ok and type(v) == "number" and v > 0 then return v end
     end
 
-    if not modem.isOpen(cfg.channel) then modem.open(cfg.channel) end
-
-    packet.wire = true
-    packet.module = "sensor"
-    packet.sensor = cfg.shortName
-    packet.description = cfg.description
-    packet.serverColour = cfg.serverColour
-
-    modem.transmit(cfg.channel, cfg.channel, packet)
-    return true
-end
-
-local function runAction(level, action)
-    return sendToServer({
-        type = "SENSOR_ACTION",
-        level = level,
-        targetType = action.targetType,
-        target = action.target,
-        command = action.command
-    })
-end
-
-local function executeLevel(level)
-    local event = cfg.events and cfg.events[level]
-    if not event or type(event.actions) ~= "table" or #event.actions == 0 then return end
-
-    for _, action in ipairs(event.actions) do
-        runAction(level, action)
-        sleep(0.05)
+    if p.getInput then
+      local ok, v = pcall(p.getInput, side)
+      if ok and type(v) == "boolean" then return v and 15 or 0 end
     end
+
+    return 0
+  end
+
+  return 0
 end
 
-local function showStatus()
-    while true do
-        header("WiRe Sensor Status", cfg.shortName .. " - " .. cfg.description)
-        print("Server Colour : " .. colourNameFromCode(cfg.serverColour))
-        print("WiRe Channel  : " .. tostring(cfg.channel))
-        print("Input Mode    : " .. tostring(cfg.input.mode))
-        if cfg.input.peripheral then print("Peripheral    : " .. tostring(cfg.input.peripheral)) end
-        print("Input Side    : " .. tostring(cfg.input.side))
-        print()
-        local level = readSignal()
-        cprint("Current Signal: " .. tostring(level), colors.yellow)
-        print("Level Event   : " .. eventSummary(level))
-        print()
-        print("Press Enter to refresh, B to go back.")
-        local v = string.lower(read())
-        if v == "b" or v == "back" then return end
+local function inputTest()
+  while true do
+    clear()
+    print("Input Test")
+    print("----------")
+    print("Mode: " .. tostring(cfg.inputMode))
+    if cfg.inputMode == "integrator" then
+      print("Peripheral: " .. tostring(cfg.peripheralName))
     end
-end
-
-local function changeInput()
-    local input
-    while true do
-        input = setupInput(cfg)
-        if testInput(input) then break end
+    print("Side: " .. tostring(cfg.inputSide))
+    print("")
+    print("Current Level: " .. tostring(readSignal()))
+    print("")
+    print("R = Refresh")
+    print("D = Done")
+    print("Q = Change input")
+    print("")
+    write("> ")
+    local c = string.lower(read() or "")
+    if c == "r" then
+      -- loop refresh
+    elseif c == "d" then
+      return true
+    elseif c == "q" then
+      return false
     end
-    cfg.input = input
-    saveConfig()
+  end
 end
 
-local function changeServerColour()
-    cfg.serverColour = pickColour(cfg.serverColour)
-    saveConfig()
-end
+local function configureInput()
+  while true do
+    clear()
+    print("Input Mode")
+    print("----------")
+    print("1. Local Redstone")
+    print("2. Redstone Integrator")
+    print("")
+    write("> ")
+    local c = read()
 
-local function monitor()
-    header("WiRe Sensor", "Monitoring")
-    cprint("Press Ctrl+T to stop.", colors.lightGray)
-    sleep(1)
-
-    local lastLevel = nil
-    while true do
-        local level = readSignal()
-        if level ~= lastLevel then
-            lastLevel = level
-            executeLevel(level)
-        end
-
+    if c == "1" then
+      cfg.inputMode = "local"
+      cfg.peripheralName = nil
+      cfg.inputSide = chooseSide()
+      if inputTest() then return end
+    elseif c == "2" then
+      local list = findRedstoneIntegrators()
+      if #list == 0 then
         clear()
-        cprint("WiRe Sensor", colors.purple)
-        print(cfg.shortName .. " - " .. cfg.description)
-        print()
-        print("Server : " .. colourNameFromCode(cfg.serverColour))
-        print("Input  : " .. cfg.input.mode .. " / " .. tostring(cfg.input.side))
-        if cfg.input.peripheral then print("Periph : " .. tostring(cfg.input.peripheral)) end
-        print()
-        cprint("Current Signal: " .. tostring(level), colors.yellow)
-        print("Event: " .. eventSummary(level))
-        print()
-        cprint("Ctrl+T to terminate", colors.gray)
-        sleep(POLL_DELAY)
+        print("No Redstone Integrator found.")
+        print("")
+        print("Check wired modem is connected")
+        print("and enabled on the integrator.")
+        pause()
+      else
+        local chosen = chooseFromList("Select Integrator", list)
+        if chosen then
+          cfg.inputMode = "integrator"
+          cfg.peripheralName = chosen.id
+          cfg.inputSide = chooseSide()
+          if inputTest() then return end
+        end
+      end
     end
+  end
+end
+
+local function setup()
+  clear()
+  print("WiRe Sensor Setup")
+  print("-----------------")
+  print("Reads redstone level 0-15")
+  print("and fires WiRe actions.")
+  print("")
+  sleep(1.5)
+
+  cfg = {}
+  cfg.events = {}
+
+  clear()
+  print("Short name, max 12 chars:")
+  print("Example: GateSens")
+  write("> ")
+  cfg.shortName = (read() or "SENSOR"):sub(1,12)
+  if cfg.shortName == "" then cfg.shortName = "SENSOR" end
+
+  clear()
+  print("Long description:")
+  print("Example: Stargate Redstone")
+  write("> ")
+  cfg.description = read() or cfg.shortName
+  if cfg.description == "" then cfg.description = cfg.shortName end
+
+  cfg.color = chooseColor()
+
+  local info = discoverServer()
+  if info then
+    clear()
+    print("Found WiRe Server+")
+    print("------------------")
+    print("Name: " .. tostring(cfg.serverName))
+    print("ID:   " .. tostring(cfg.server))
+    print("Ver:  " .. tostring(cfg.serverVersion))
+    print("")
+    print("Press Enter to continue.")
+    read()
+  else
+    clear()
+    print("No WiRe server found on:")
+    print(cfg.color)
+    print("")
+    print("Sensor needs a server for")
+    print("groups/devices and actions.")
+    pause()
+  end
+
+  configureInput()
+
+  clear()
+  print("Configure level events now?")
+  print("")
+  print("Unset levels stay disabled.")
+  print("You can edit them later.")
+  print("")
+  print("Y = Yes")
+  print("N = No")
+  write("> ")
+  local c = string.lower(read() or "")
+  if c == "y" or c == "yes" then editEvents() end
+
+  saveConfig()
+  clear()
+  print("Setup complete.")
+  print("Sensor: " .. tostring(cfg.shortName))
+  print("Colour: " .. tostring(cfg.color))
+  sleep(2)
+end
+
+local function fireLevel(level)
+  local e = cfg.events and cfg.events[level]
+  if not e then return end
+
+  if e.targetType == "group" then
+    sendGroupAction(e.target, e.action)
+  elseif e.targetType == "device" then
+    sendDeviceAction(e.target, e.action)
+  end
+
+  clear()
+  print("WiRe Sensor")
+  print("-----------")
+  print("Level changed to: " .. tostring(level))
+  print("Fired:")
+  print(tostring(e.targetType) .. ": " .. tostring(e.targetName or e.target))
+  print("Action: " .. tostring(e.action))
+  sleep(0.75)
+end
+
+local function monitorLoop()
+  local previous = -1
+  clear()
+  print("WiRe Sensor " .. VERSION)
+  print("----------------")
+  print("Name: " .. tostring(cfg.shortName))
+  print("Colour: " .. tostring(cfg.color))
+  print("Server: " .. tostring(cfg.server or "none"))
+  print("")
+  print("Monitoring...")
+  print("Press Q to quit.")
+  sleep(1)
+
+  while true do
+    local level = tonumber(readSignal()) or 0
+    if level < 0 then level = 0 end
+    if level > 15 then level = 15 end
+
+    if level ~= previous then
+      previous = level
+      fireLevel(level)
+      clear()
+      print("WiRe Sensor " .. VERSION)
+      print("----------------")
+      print("Name: " .. tostring(cfg.shortName))
+      print("Current Level: " .. tostring(level))
+      print("")
+      print("Press Q to quit.")
+    end
+
+    local timer = os.startTimer(POLL_TIME)
+    local event, p1 = os.pullEvent()
+    if event == "char" and string.lower(p1) == "q" then
+      return
+    elseif event == "timer" then
+      -- continue
+    end
+  end
 end
 
 local function mainMenu()
-    while true do
-        header("WiRe Sensor", cfg.shortName .. " - " .. cfg.description)
-        print("1. Start monitoring")
-        print("2. View current signal")
-        print("3. Edit redstone level events")
-        print("4. Change input source")
-        print("5. Change server colour")
-        print("6. Re-run setup")
-        print("7. Exit")
-        print()
-        local choice = ask("Select")
-
-        if choice == "1" then monitor()
-        elseif choice == "2" then showStatus()
-        elseif choice == "3" then editEvents()
-        elseif choice == "4" then changeInput()
-        elseif choice == "5" then changeServerColour()
-        elseif choice == "6" then newConfig(cfg)
-        elseif choice == "7" then clear(); return end
+  while true do
+    clear()
+    print("WiRe Sensor")
+    print("-----------")
+    print("Name: " .. tostring(cfg.shortName))
+    print("Colour: " .. tostring(cfg.color))
+    print("Input: " .. tostring(cfg.inputMode) .. " / " .. tostring(cfg.inputSide))
+    if cfg.inputMode == "integrator" then
+      print("Peripheral: " .. tostring(cfg.peripheralName))
     end
+    print("Current Level: " .. tostring(readSignal()))
+    print("")
+    print("1. Start monitoring")
+    print("2. Edit level events")
+    print("3. Change input source")
+    print("4. Rediscover server")
+    print("5. Re-run setup")
+    print("6. Exit")
+    print("")
+    write("> ")
+
+    local c = read()
+    if c == "1" then
+      monitorLoop()
+    elseif c == "2" then
+      editEvents()
+    elseif c == "3" then
+      configureInput()
+      saveConfig()
+    elseif c == "4" then
+      discoverServer()
+      saveConfig()
+      pause()
+    elseif c == "5" then
+      setup()
+    elseif c == "6" then
+      clear()
+      return
+    end
+  end
 end
 
-cfg = loadConfig()
-if not cfg then
-    newConfig(nil)
+local function main()
+  cfg = loadConfig()
+  if not cfg then setup() end
+  cfg.events = cfg.events or {}
+  modemSide = findPeripheral("modem")
+  if not modemSide then error("No modem found.", 0) end
+  updateNetwork()
+  local foundServer = findServerByColour()
+  if foundServer then cfg.server = foundServer end
+  mainMenu()
 end
-mainMenu()
+
+main()
