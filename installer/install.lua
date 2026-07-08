@@ -27,6 +27,13 @@ local packages = {
         source = "trigger/main.lua",
         target = INSTALL_DIR .. "/trigger.lua",
         startup = "shell.run(\"" .. INSTALL_DIR .. "/trigger.lua\")"
+     }, 
+        sensor = {
+        title = "WiRe Server",
+        source = "server/main.lua",
+        target = INSTALL_DIR .. "/sensor.lua",
+        startup = "shell.run(\"" .. INSTALL_DIR .. "/sensor.lua\")"
+    },
     }
 }
 
