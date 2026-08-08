@@ -1,12 +1,19 @@
-# WiRe Development Guide
+# WiRe Rewired Development Guide
 
-This document records the working rules for changing WiRe without unnecessarily destabilising existing installations.
+This document records the working rules for changing WiRe Rewired without unnecessarily destabilising existing installations.
 
 ## Primary rule
 
 **Keep working WiRe installations working.**
 
 WiRe contains a substantial amount of proven legacy ComputerCraft code alongside newer features. Improvements should normally be small, understandable and testable.
+
+## Branch policy
+
+- `main` is the stable/current branch and should remain untouched by untested development work.
+- `development` is the integration/testing branch for WiRe Rewired changes.
+- Feature/refactor branches may be used for higher-risk work before it reaches `development`.
+- Do not merge `development` into `main` until core behaviour has been tested in Minecraft/CC:Tweaked.
 
 ## Before changing working code
 
@@ -15,7 +22,7 @@ WiRe contains a substantial amount of proven legacy ComputerCraft code alongside
 3. Preserve compatibility unless a breaking change is intentional and documented.
 4. Make one logical change at a time.
 5. Commit working milestones frequently so regressions are easy to isolate and revert.
-6. Test the affected Server/Client/Trigger/Sensor combination in CC:Tweaked before treating the change as complete.
+6. Test the affected Server/Client/Trigger/Sensor/Tablet combination in CC:Tweaked before treating the change as complete.
 
 ## Areas requiring extra care
 
@@ -31,90 +38,128 @@ The following are compatibility-sensitive:
 - Lock/unlock commands
 - Runtime configuration paths
 - Group save/migration format
-- Installer destination paths
 
 Do not refactor these solely for appearance.
 
-## Current architecture
+## Development architecture
 
-The main programs are still largely self-contained:
+The main Server/Client/Trigger/Sensor/Tablet programs remain the proven behaviour layer.
 
-- Server
-- Client
-- Trigger
-- Sensor
-- Tablet
+The `development` branch adds a runtime layer in front of them rather than immediately rewriting their internals.
 
-The `shared/` directory represents the direction of future development, but some modules are placeholders. Code should only be moved there when both callers can be updated and tested together.
+### Runtime responsibilities
+
+`runtime/launcher.lua` currently owns:
+
+- development-build identification;
+- component selection;
+- team configuration;
+- team-scoped Rednet protocol mapping;
+- launch-time update notification.
+
+This lets WiRe gain new cross-cutting behaviour without rewriting the established encrypted packet handling inside every component at once.
+
+### Team model
+
+Teams were chosen instead of per-player WiRe allocations.
+
+Each team can independently reuse the normal ComputerCraft colour networks. Because WiRe already uses colour as its server/network grouping model, that naturally provides up to **16 colour-server slots per team**.
+
+The runtime maps a legacy protocol such as:
+
+```text
+WiRePurple
+```
+
+to a team-scoped protocol such as:
+
+```text
+WiReRewired:TEAM-NAME:WiRePurple
+```
+
+when team isolation is enabled.
+
+Legacy mode leaves the original protocol untouched.
+
+This currently prevents accidental cross-team discovery/control. It is not a substitute for strong cryptographic authentication.
 
 ## Runtime data
 
 Program updates should not overwrite user-created data.
 
-Server groups currently live at:
+Important paths include:
 
 ```text
+/data/WiReServerCfg
+/data/WiReClientCfg
 /data/WiRe/groups
-```
-
-Backups live under:
-
-```text
 /data/WiRe/backups/
+/data/WiRe/team.cfg
 ```
 
-The server also understands the legacy `/data/WiReGroups` location and migrates it.
+The Server also understands the legacy `/data/WiReGroups` location and migrates it.
 
-The main server configuration is stored at `/data/WiReServerCfg`.
+## Development installer and updater
+
+`manifest.lua` is the authoritative package definition for the `development` branch.
+
+`installer/install-dev.lua` reads that manifest and installs the selected package plus common runtime/shared files.
+
+`tools/update.lua` re-runs the development installer for the recorded component. It must preserve `/data` configuration and must not take over a custom `startup.lua` that was not created by the development installer.
 
 ## Known technical debt
 
-### Version consolidation
+### Internal program version labels
 
-Several version concepts currently coexist. The working server has its own version string while repository/package metadata has separate development version values.
+The development package now has a consistent external version (`version.txt`, `shared/version.lua`, `manifest.lua`), but the large legacy-derived programs still contain their own historical internal version strings.
 
-Future work should establish one authoritative version source and make the installer/updater/programs consume it where practical.
+Do not edit those files solely to make the labels match. Consolidate internal version display when each program is already being safely touched/tested.
 
-### Installer and manifest consolidation
+### Shared crypto/protocol extraction
 
-`installer/install.lua` currently contains its own package definitions. `manifest.lua` separately describes a more complete package layout.
+`shared/protocol.lua` now records common names/metadata for new development code. `shared/crypto.lua` remains intentionally inactive.
 
-Future work should make one definition authoritative. Do not change the existing installer paths casually because users may already have installations using them.
-
-### Shared modules
-
-`shared/protocol.lua` and `shared/crypto.lua` are currently scaffolding. The proven communication implementation remains embedded in the working programs.
-
-Extraction should happen incrementally, with compatibility testing after each step.
+The proven packet/encryption implementation still lives inside the working programs. Extraction should happen incrementally, with compatibility testing after each step.
 
 ### Network authentication
 
-Current encryption keys are derived from ComputerCraft IDs and a fixed WiRe string. This provides obfuscation/encryption but not a strong shared-secret authentication model.
+Current WiRe encryption keys are derived from ComputerCraft IDs and a fixed WiRe string. Team namespace isolation does not change that fact.
 
-A future protocol revision should consider a generated network/team secret or pairing mechanism. This should be designed as a compatibility-aware change rather than patched into only one program.
+A future compatibility-aware protocol revision should add a genuine shared secret/pairing/authentication mechanism. Do not claim the current team namespace is cryptographic security.
 
 ### Large source files
 
 The working programs, especially the Server, are large. Splitting them into modules is desirable eventually, but functionality should be extracted by subsystem rather than through a wholesale rewrite.
 
+### Existing-file cleanup
+
+Some legacy-derived source files contain old formatting, duplicate comments or historical leftovers. Remove those when the file is already being changed and tested for a functional reason, rather than generating giant formatting-only diffs.
+
+## Update notification rule
+
+The development launcher may check the remote development version and **notify** the user when it differs. It must not silently replace working code at launch.
+
+The user explicitly chooses when to run `wire/tools/update.lua`.
+
 ## Documentation rules
 
-When a feature becomes part of the working `main` branch:
+When development behaviour changes:
 
-- Update `README.md` if it changes user-visible capabilities or installation.
-- Update `docs/STRUCTURE.md` if files, directories or runtime paths change.
+- Update `README.md` for user-visible capabilities or installation changes.
+- Update `docs/STRUCTURE.md` for files, modules, architecture or runtime paths.
+- Update `docs/TESTING.md` when a new feature needs a regression test.
 - Update this document when a new compatibility constraint or major technical-debt item is discovered.
 
 ## Formatting
 
 For new Lua code:
 
-- Use consistent indentation within the surrounding section.
+- Use consistent two-space indentation in new modular files.
 - Keep comments concise and useful.
 - Prefer descriptive local names.
 - Avoid introducing globals unless the existing architecture requires them.
 - Keep related helpers together where practical.
-- Do not perform formatting-only rewrites of entire legacy files unless there is a specific reason; large whitespace diffs make functional changes harder to review.
+- Do not perform formatting-only rewrites of entire legacy files unless there is a specific reason.
 
 ## Commits
 
@@ -122,12 +167,13 @@ Prefer focused commits such as:
 
 ```text
 fix: preserve group state during refresh
-feat: add trigger server-info request
-docs: document runtime data layout
+feat: add team namespace runtime
+feat: add launch-time update notice
+docs: add Minecraft development test plan
 refactor: extract shared colour definitions
 ```
 
-A commit should ideally leave WiRe in a runnable state.
+A commit should ideally leave the branch in a runnable state.
 
 ## Licensing and credits
 
