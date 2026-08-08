@@ -23,6 +23,8 @@ For each component being tested:
 - Confirm every download reports `OK`.
 - Confirm `wire/version.txt` contains the development version.
 - Confirm `wire/component.cfg` contains the installed component name.
+- Run `wire/tools/selftest.lua` and confirm all checks pass.
+- Confirm the self-test reports that the shared storage and component-registry modules load.
 - If auto-start was selected, reboot and confirm the WiRe Rewired launcher runs.
 - Confirm the launcher displays `DEVELOPMENT BUILD` before starting the existing WiRe program.
 
@@ -49,6 +51,17 @@ wire/tools/team.lua
 ```
 
 and confirm the tool can change teams and display the mapped protocol namespace.
+
+### 3.2 storage regression check
+
+The 3.2 development stage moved team configuration onto the shared storage module.
+
+- Note the current team with `wire/tools/team.lua`.
+- Reboot the computer.
+- Confirm the same team is still selected.
+- Change the team, reboot again and confirm the new value persists.
+
+Expected result: `/data/WiRe/team.cfg` behaves exactly as it did in 3.1.
 
 ### Legacy compatibility check
 
@@ -123,6 +136,7 @@ Run the updater and confirm:
 - It identifies the currently installed component.
 - It re-runs the development installer.
 - Program files update.
+- New shared modules are downloaded automatically.
 - `/data/WiRe/team.cfg` remains intact.
 - Existing WiRe Server/Client configuration remains intact.
 
