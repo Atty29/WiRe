@@ -2,7 +2,7 @@
 
 local version = {
   name = "WiRe Rewired",
-  version = "3.3.8-dev",
+  version = "3.3.9-dev",
   channel = "development",
   repoUser = "Atty29",
   repoName = "WiRe",
