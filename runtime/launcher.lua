@@ -11,6 +11,7 @@ local STORAGE_FILE = ROOT .. "/shared/storage.lua"
 local COMPONENTS_FILE = ROOT .. "/shared/components.lua"
 local COMPONENT_FILE = ROOT .. "/component.cfg"
 local UPDATE_PREFS_FILE = "/data/WiRe/update.cfg"
+local UPDATE_LOG_FILE = "/data/WiRe/update-check.log"
 local launchArgs = { ... }
 
 local function loadModule(path)
@@ -24,6 +25,12 @@ local version = loadModule(VERSION_FILE)
 local team = loadModule(TEAM_FILE)
 local storage = loadModule(STORAGE_FILE)
 local components = loadModule(COMPONENTS_FILE)
+
+local function logUpdate(text)
+  local old = storage.readText(UPDATE_LOG_FILE, "")
+  local stamp = tostring(os.epoch and os.epoch("utc") or os.time())
+  storage.writeText(UPDATE_LOG_FILE, old .. stamp .. " " .. tostring(text) .. "\n")
+end
 
 local function askYesNo(question, defaultYes)
   while true do
@@ -78,11 +85,29 @@ local function saveUpdatePrefs(prefs)
 end
 
 local function checkForUpdate(prefs)
-  if prefs.mode=="never" or not http then return nil end
-  local ok,response=pcall(http.get,version.versionUrl(true),{["Cache-Control"]="no-cache"})
-  if not ok or not response then return nil end
-  local remote=storage.trim(response.readAll()); response.close()
-  if remote~="" and version.isDifferent(remote) then return remote end
+  if prefs.mode=="never" then logUpdate("automatic check skipped: preference=never"); return nil end
+  if not http then logUpdate("automatic check failed: HTTP API unavailable"); return nil end
+
+  -- Auto-start can run immediately after a computer/chunk loads. Give HTTP a
+  -- moment to settle, then retry transient failures instead of silently giving up.
+  sleep(0.75)
+  for attempt=1,3 do
+    local url=version.versionUrl(true)
+    local ok,response,err=pcall(http.get,url,{["Cache-Control"]="no-cache"})
+    if ok and response then
+      local remote=storage.trim(response.readAll()); response.close()
+      if remote~="" then
+        logUpdate("attempt "..attempt.." remote="..remote.." installed="..version.version)
+        if version.isDifferent(remote) then return remote end
+        return nil
+      end
+      logUpdate("attempt "..attempt.." returned empty response")
+    else
+      logUpdate("attempt "..attempt.." failed: "..tostring(err or response))
+    end
+    sleep(attempt)
+  end
+  logUpdate("automatic check abandoned after 3 attempts")
   return nil
 end
 
