@@ -1,137 +1,133 @@
 # WiRe
 
-**WiRe (Wireless Redstone)** is a wireless device management and automation system for **ComputerCraft / CC:Tweaked**.
+**WiRe (Wireless Redstone)** is a wireless device-management and automation system for **ComputerCraft / CC:Tweaked**.
 
-WiRe allows players to discover, register and control wireless redstone devices from one or more central servers. Devices can be organised into groups, controlled manually through WiRe Client or automatically through WiRe Trigger.
+WiRe allows players to discover, register, organise and control wireless redstone devices from a central server. Devices can be controlled manually, arranged into reusable groups, or operated automatically through WiRe Trigger.
 
-WiRe is designed to be completely generic. It can control anything that can be operated by a redstone signal, including (but not limited to):
+WiRe is intentionally generic. It can control anything operated by a redstone signal, including:
 
-- Doors
+- Doors and hatches
 - Lighting
-- Machines
+- Machines and energy devices
 - Rail switches
 - Farms
 - Security systems
 - Elevators
-- Any other redstone-controlled mechanism
+- Other redstone-controlled mechanisms
 
 ---
 
 ## History
 
-The original **WiRe (Wireless Redstone)** project was created by **Dog**, also known as **HydrantHunter**, as a simple wireless redstone control system for ComputerCraft.
+The original **WiRe (Wireless Redstone)** project was created by **Dog**, also known as **HydrantHunter**, as a wireless redstone control system for ComputerCraft.
 
-The original project introduced the core concept of discovering wireless redstone devices and controlling them from a central server using wireless modems. It provided the foundation on which many ComputerCraft automation projects were built.
+The original project introduced the core idea of discovering wireless redstone devices and controlling them from a central server using wireless modems. The current WiRe Development Project continues from that foundation while expanding the system for modern **CC:Tweaked** installations.
 
-The **WiRe Development Project** continues from that foundation. While the original concepts remain respected and credited, this repository is an independent continuation focused on expanding WiRe into a more capable, modular and maintainable automation platform for **CC:Tweaked**.
+Original WiRe Pastebin: `hqpRw4Jy`
 
-Current development aims to preserve the original spirit of WiRe while introducing new features such as:
+Without Dog's original work, this project would not exist. Original credits are retained in the working source files.
 
-- Improved device management
-- Device grouping
-- Enhanced user interface
-- Search and sorting
-- Security and access control
-- Portable tablet support
-- Continued community-driven development
-
-The original WiRe project can still be found here:
-
-**Original Pastebin:** `hqpRw4Jy`
-
-Without Dog's original work, the WiRe Development Project would not exist.
 ---
 
-# Installation
+## Current Development Edition
 
-Install the latest development version directly from GitHub:
+The working server currently identifies itself as:
+
+```text
+3.0.2 Community Manager
+```
+
+WiRe remains under active development. Repository/package versioning is being consolidated and should not yet be treated as a stable public release-number scheme.
+
+### Current capabilities
+
+- WiRe Server and Client
+- WiRe Trigger
+- WiRe Sensor
+- Tablet development client
+- Wireless device discovery and registration
+- Large device lists with paging
+- Device search and A-Z/Z-A sorting
+- Device groups and group management
+- Saved group configuration with legacy-data migration
+- PIN terminal lock
+- Panic lock
+- Configurable failed-PIN and panic responses
+- Trigger access to devices, groups and server information
+- GitHub-based installer
+- Compatibility with the existing WiRe communication model
+
+---
+
+## Installation
+
+Install from GitHub with:
 
 ```text
 wget run https://raw.githubusercontent.com/Atty29/WiRe/main/installer/install.lua
 ```
 
-The installer currently supports:
+The current interactive installer offers:
 
-- WiRe Server
-- WiRe Client
-- WiRe Trigger
+1. WiRe Server
+2. WiRe Client
+3. WiRe Trigger
+4. WiRe Sensor
 
-Tablet support will be added in a future release.
-
----
-
-# Current Repository Structure
-
-```
-server/
-    WiRe Server
-
-client/
-    WiRe Client
-
-trigger/
-    WiRe Trigger
-
-shared/
-    Shared libraries
-
-installer/
-    GitHub installer
-
-docs/
-    Project documentation
-```
+The tablet and full-package definitions are present in the repository manifest but are not currently exposed by the interactive installer.
 
 ---
 
-# Development Status
+## Repository Structure
 
-Current Version
-
+```text
+server/       Working WiRe Server
+client/       Working WiRe Client
+trigger/      WiRe Trigger
+sensor/       WiRe Sensor
+ tablet/      Tablet development code
+shared/       Shared-module scaffolding for future refactoring
+installer/    GitHub installer
+tools/        Maintenance/update tooling
+docs/         Project and development documentation
+legacy/       Preserved legacy source/reference material
 ```
-0.1.0-dev
-```
 
-Current Features
-
-- GitHub installer
-- WiRe Server
-- WiRe Client
-- WiRe Trigger
-- Existing WiRe compatibility
+See `docs/STRUCTURE.md` for more detail.
 
 ---
 
-# Roadmap
+## Development Direction
 
-## v0.2
+Current development priorities are:
 
-- Search
-- Device Sorting
-- Updated Server Interface
+- Keep the working WiRe network stable.
+- Preserve compatibility wherever practical.
+- Consolidate installer, manifest and version information.
+- Improve update/version notification support.
+- Continue development of team-aware/server-aware installations.
+- Improve network authentication without casually breaking existing devices.
+- Move common code into `shared/` gradually and only when it can be tested safely.
+- Continue improving documentation and maintainability.
 
-## v0.3
-
-- Security System
-- PIN Lock
-- Panic Lock
-
-## v0.4
-
-- Tablet Support
-
-## v1.0
-
-- First Stable Release
+See `docs/DEVELOPMENT.md` for development rules and known technical debt.
 
 ---
 
-# Development Philosophy
+## Development Philosophy
 
-The WiRe Development Project follows a few simple principles:
+WiRe follows a few simple principles:
 
 - Keep WiRe generic.
 - Preserve compatibility wherever practical.
 - Improve through small, tested changes.
+- Keep user configuration separate from program files.
+- Prefer working code over unnecessary rewrites.
 - Build for long-term maintainability.
 - Credit the original project and continue its development respectfully.
+
+---
+
+## Licence and Credits
+
+See `LICENSE` for the repository's current notice. The original WiRe credits must remain in the legacy and derived working source files.
