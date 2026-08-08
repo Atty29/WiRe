@@ -102,15 +102,30 @@ local function saveComponent(component)
   f.close()
 end
 
+local function isWiReStartup()
+  if not fs.exists("startup.lua") then return false end
+  local f = fs.open("startup.lua", "r")
+  if not f then return false end
+  local raw = f.readAll()
+  f.close()
+  return string.find(raw, "WiRe Rewired development auto%-start") ~= nil
+end
+
 local function installStartup(component, unattended)
   if not component then return false end
-  local replace = true
-  if fs.exists("startup.lua") and not unattended then
+  local replace = false
+
+  if unattended then
+    -- An updater must never hijack a user's custom startup.lua. It only refreshes
+    -- a startup file that was previously created by this development installer.
+    replace = isWiReStartup()
+  elseif fs.exists("startup.lua") then
     line("startup.lua already exists.", colors.orange)
     replace = askYesNo("Replace it with the WiRe Rewired launcher?", false)
-  elseif not fs.exists("startup.lua") and not unattended then
+  else
     replace = askYesNo("Start WiRe Rewired automatically on boot?", true)
   end
+
   if not replace then return false end
 
   local f = fs.open("startup.lua", "w")
