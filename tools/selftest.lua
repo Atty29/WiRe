@@ -5,6 +5,7 @@ local required = {
   "wire/runtime/launcher.lua",
   "wire/shared/version.lua",
   "wire/shared/team.lua",
+  "wire/shared/components.lua",
   "wire/shared/protocol.lua",
   "wire/shared/storage.lua",
   "wire/tools/update.lua",
@@ -32,15 +33,22 @@ for i = 1, #required do
   allOk = result(ok, required[i]) and allOk
 end
 
+local okStorage, storage = pcall(dofile, "wire/shared/storage.lua")
+allOk = result(okStorage and type(storage) == "table" and type(storage.readText) == "function", "storage module loads") and allOk
+
+local okComponents, components = pcall(dofile, "wire/shared/components.lua")
+allOk = result(okComponents and type(components) == "table" and type(components.isValid) == "function", "component registry loads") and allOk
+
 local component
-if fs.exists("wire/component.cfg") then
-  local f = fs.open("wire/component.cfg", "r")
-  if f then component = (f.readAll() or ""):gsub("%s+", ""); f.close() end
+if okStorage and okComponents then
+  component = storage.trim(storage.readText("wire/component.cfg", ""))
+else
+  component = nil
 end
-local valid = { server = true, client = true, trigger = true, sensor = true, tablet = true }
-allOk = result(component ~= nil and valid[component] == true, "component.cfg: " .. tostring(component or "missing")) and allOk
-if component and valid[component] then
-  allOk = result(fs.exists("wire/" .. component .. ".lua"), "component program: wire/" .. component .. ".lua") and allOk
+allOk = result(component ~= nil and okComponents and components.isValid(component), "component.cfg: " .. tostring(component or "missing")) and allOk
+if component and okComponents and components.isValid(component) then
+  local path = components.path(component)
+  allOk = result(path ~= nil and fs.exists(path), "component program: " .. tostring(path)) and allOk
 end
 
 local okVersion, version = pcall(dofile, "wire/shared/version.lua")
