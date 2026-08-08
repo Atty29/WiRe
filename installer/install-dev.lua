@@ -30,8 +30,21 @@ local function askYesNo(question, defaultYes)
   end
 end
 
+local function cacheStamp()
+  if os.epoch then
+    local ok, value = pcall(os.epoch, "utc")
+    if ok and value then return tostring(value) end
+  end
+  return tostring(math.floor((os.time() or 0) * 100000) + math.random(1, 99999))
+end
+
+local function freshUrl(url)
+  local join = string.find(url, "?", 1, true) and "&" or "?"
+  return url .. join .. "wire_download=" .. cacheStamp()
+end
+
 local function httpRead(url)
-  local response, err = http.get(url)
+  local response, err = http.get(freshUrl(url), { ["Cache-Control"] = "no-cache" })
   if not response then return nil, err end
   local data = response.readAll()
   response.close()
@@ -116,8 +129,6 @@ local function installStartup(component, unattended)
   local replace = false
 
   if unattended then
-    -- An updater must never hijack a user's custom startup.lua. It only refreshes
-    -- a startup file that was previously created by this development installer.
     replace = isWiReStartup()
   elseif fs.exists("startup.lua") then
     line("startup.lua already exists.", colors.orange)
