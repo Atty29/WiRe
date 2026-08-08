@@ -112,7 +112,8 @@ end
 
 local function checkForUpdate(prefs)
   if prefs.mode == "never" or not http then return nil end
-  local ok, response = pcall(http.get, version.versionUrl())
+  local url = version.versionUrl(true)
+  local ok, response = pcall(http.get, url, { ["Cache-Control"] = "no-cache" })
   if not ok or not response then return nil end
   local remote = storage.trim(response.readAll())
   response.close()
