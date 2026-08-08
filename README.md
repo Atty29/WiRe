@@ -1,43 +1,34 @@
-# WiRe
+# WiRe Rewired
 
-**WiRe (Wireless Redstone)** is a wireless device-management and automation system for **ComputerCraft / CC:Tweaked**.
+**WiRe Rewired** is the current development continuation of **WiRe (Wireless Redstone)** for **ComputerCraft / CC:Tweaked**.
 
-WiRe allows players to discover, register, organise and control wireless redstone devices from a central server. Devices can be controlled manually, arranged into reusable groups, or operated automatically through WiRe Trigger.
+It is a generic wireless device-management and automation platform: discover devices, organise them, control them from a central Server, run saved groups, trigger automation remotely and build larger systems without tying WiRe to one specific Minecraft mod or machine type.
 
-WiRe is intentionally generic. It can control anything operated by a redstone signal, including:
-
-- Doors and hatches
-- Lighting
-- Machines and energy devices
-- Rail switches
-- Farms
-- Security systems
-- Elevators
-- Other redstone-controlled mechanisms
+Typical uses include doors and hatches, lighting, machines, energy systems, rail switches, farms, security systems, elevators and any other redstone-controlled mechanism.
 
 ---
 
 ## History
 
-The original **WiRe (Wireless Redstone)** project was created by **Dog**, also known as **HydrantHunter**, as a wireless redstone control system for ComputerCraft.
+The original **WiRe (Wireless Redstone)** project was created by **Dog**, also known as **HydrantHunter**.
 
-The original project introduced the core idea of discovering wireless redstone devices and controlling them from a central server using wireless modems. The current WiRe Development Project continues from that foundation while expanding the system for modern **CC:Tweaked** installations.
+The original project introduced the core idea of discovering wireless redstone devices and controlling them from a central ComputerCraft server using wireless modems. WiRe Rewired continues from that foundation while expanding it for modern **CC:Tweaked** installations.
 
 Original WiRe Pastebin: `hqpRw4Jy`
 
-Without Dog's original work, this project would not exist. Original credits are retained in the working source files.
+Without Dog's original work, this project would not exist. Original credits are retained in the working and legacy source files.
 
 ---
 
-## Current Development Edition
+## Development Build
 
-The working server currently identifies itself as:
+Current development package version:
 
 ```text
-3.0.2 Community Manager
+3.1.0-dev
 ```
 
-WiRe remains under active development. Repository/package versioning is being consolidated and should not yet be treated as a stable public release-number scheme.
+The working legacy-derived Server still contains its own internal historical version label. Package/version consolidation is intentionally being handled around the proven programs first rather than by making risky cosmetic edits to the large working files.
 
 ### Current capabilities
 
@@ -54,27 +45,58 @@ WiRe remains under active development. Repository/package versioning is being co
 - Panic lock
 - Configurable failed-PIN and panic responses
 - Trigger access to devices, groups and server information
-- GitHub-based installer
-- Compatibility with the existing WiRe communication model
+- **Team network isolation** while preserving the existing WiRe programs
+- **Up to 16 colour-server slots per team**
+- Development-build launcher
+- In-game update notification at launch
+- Manifest-driven development installer
+- Component-aware updater
+- Compatibility mode for existing non-team WiRe networks
 
 ---
 
-## Installation
-
-Install from GitHub with:
+## Install the Development Build
 
 ```text
-wget run https://raw.githubusercontent.com/Atty29/WiRe/main/installer/install.lua
+wget run https://raw.githubusercontent.com/Atty29/WiRe/development/installer/install-dev.lua
 ```
 
-The current interactive installer offers:
+The development installer offers:
 
-1. WiRe Server
-2. WiRe Client
-3. WiRe Trigger
-4. WiRe Sensor
+1. WiRe Rewired Server
+2. WiRe Rewired Client
+3. WiRe Rewired Trigger
+4. WiRe Rewired Sensor
+5. WiRe Rewired Tablet
+6. Full development package
 
-The tablet and full-package definitions are present in the repository manifest but are not currently exposed by the interactive installer.
+The installer downloads its file list from `manifest.lua`, so package definitions now have one authoritative source on the development branch.
+
+### Team setup
+
+The development launcher asks for a team on first run. Use the **same team name** on a Server and all Clients/Triggers/Sensors/Tablets intended to communicate with it.
+
+Each team receives its own WiRe network namespace while the established programs continue to use their normal colour model internally. This means the usual ComputerCraft colours can be reused independently by different teams — effectively **16 WiRe colour-server slots per team**.
+
+To change the team later:
+
+```text
+wire/tools/team.lua
+```
+
+Legacy non-team networking can also be selected from that tool.
+
+### Updates
+
+The launcher compares the installed development version with the current `development/version.txt` when HTTP is available. If a newer/different development build is detected, it displays an update notice without automatically changing the installation.
+
+Update manually with:
+
+```text
+wire/tools/update.lua
+```
+
+WiRe configuration stored under `/data` is kept separate from downloaded program files.
 
 ---
 
@@ -85,44 +107,44 @@ server/       Working WiRe Server
 client/       Working WiRe Client
 trigger/      WiRe Trigger
 sensor/       WiRe Sensor
- tablet/      Tablet development code
-shared/       Shared-module scaffolding for future refactoring
-installer/    GitHub installer
-tools/        Maintenance/update tooling
-docs/         Project and development documentation
+tablet/       Tablet development code
+runtime/      Development launcher/runtime compatibility layer
+shared/       Shared helpers and modularisation targets
+installer/    Main and development installers
+tools/        Update/team/maintenance tools
+docs/         Project, development and testing documentation
 legacy/       Preserved legacy source/reference material
 ```
 
-See `docs/STRUCTURE.md` for more detail.
+See `docs/STRUCTURE.md` for repository boundaries and `docs/TESTING.md` for the Minecraft test plan.
 
 ---
 
-## Development Direction
+## Development Approach
 
-Current development priorities are:
+The current large Server/Client/etc. files remain the proven behaviour layer. WiRe Rewired is being subdivided **around them first** rather than performing a risky all-at-once rewrite.
 
-- Keep the working WiRe network stable.
-- Preserve compatibility wherever practical.
-- Consolidate installer, manifest and version information.
-- Improve update/version notification support.
-- Continue development of team-aware/server-aware installations.
-- Improve network authentication without casually breaking existing devices.
-- Move common code into `shared/` gradually and only when it can be tested safely.
-- Continue improving documentation and maintainability.
+The development runtime now owns cross-cutting behaviour such as team namespaces, build identification and update notification. Shared modules provide clean homes for new common functionality. Existing packet/encryption code stays in place until it can be extracted and tested safely.
 
-See `docs/DEVELOPMENT.md` for development rules and known technical debt.
+Current priorities are:
+
+- Keep existing Server/Client/Trigger behaviour working.
+- Test team isolation in a real multiplayer CC:Tweaked environment.
+- Keep configuration outside downloaded program files.
+- Continue moving suitable common functionality into `shared/` in small tested stages.
+- Improve authentication in a future compatibility-aware protocol revision.
+- Keep `main` stable while development work is tested on the `development` branch.
 
 ---
 
 ## Development Philosophy
-
-WiRe follows a few simple principles:
 
 - Keep WiRe generic.
 - Preserve compatibility wherever practical.
 - Improve through small, tested changes.
 - Keep user configuration separate from program files.
 - Prefer working code over unnecessary rewrites.
+- Commit useful milestones frequently.
 - Build for long-term maintainability.
 - Credit the original project and continue its development respectfully.
 
