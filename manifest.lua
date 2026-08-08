@@ -3,7 +3,7 @@
 
 return {
   name = "WiRe Rewired",
-  version = "3.3.9-dev",
+  version = "3.4.0-dev",
   channel = "development",
   branch = "development",
   baseUrl = "https://raw.githubusercontent.com/Atty29/WiRe/development/",
