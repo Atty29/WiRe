@@ -46,8 +46,12 @@ allOk = result(okConfig and type(config) == "table" and type(config.mergeDefault
 if okConfig and type(config) == "table" then
   local defaults = config.clientDefaults()
   local sample = { name = "Test Device", color = "Light Blue", getFix = false, deviceType = "Bridge" }
-  local merged = config.mergeDefaults(config.clone(sample), defaults)
-  local migrated, changed = config.migrateClient(merged)
+
+  -- Migrations must run against the original legacy table before defaults are
+  -- merged. Otherwise a modern default such as newColors=true can hide the
+  -- fact that an old colour name still needs converting.
+  local migrated, changed = config.migrateClient(config.clone(sample))
+  migrated = config.mergeDefaults(migrated, defaults)
 
   allOk = result(migrated.name == "Test Device" and migrated.side == "top", "config defaults preserve existing values") and allOk
   allOk = result(changed == true and migrated.color == "Sky" and migrated.getGPSFix == false and migrated.deviceType == "Energy", "legacy client migration is compatible") and allOk
@@ -75,8 +79,31 @@ if okTeam and type(team) == "table" then
   local cfg = team.load()
   if cfg then
     print("       " .. team.describe(cfg))
+
     if cfg.enabled then
-      print("       Purple => " .. team.protocol(cfg, "WiRePurple"))
+      local configuredColour
+      if okConfig and component == "server" and fs.exists("/data/WiReServerCfg") then
+        local serverCfg = config.load("/data/WiReServerCfg", config.serverDefaults(), {
+          requireExisting = true,
+          migrate = config.migrateServer,
+          saveMigrated = false,
+        })
+        if type(serverCfg) == "table" then configuredColour = serverCfg.color end
+      elseif okConfig and component == "client" and fs.exists("/data/WiReClientCfg") then
+        local clientCfg = config.load("/data/WiReClientCfg", config.clientDefaults(), {
+          requireExisting = true,
+          migrate = config.migrateClient,
+          saveMigrated = false,
+        })
+        if type(clientCfg) == "table" then configuredColour = clientCfg.color end
+      end
+
+      if configuredColour and configuredColour ~= "" then
+        local protocolName = "WiRe" .. tostring(configuredColour)
+        print("       " .. tostring(configuredColour) .. " => " .. team.protocol(cfg, protocolName))
+      else
+        print("       Example: Purple => " .. team.protocol(cfg, "WiRePurple"))
+      end
     end
   else
     term.setTextColor(colors.yellow)
