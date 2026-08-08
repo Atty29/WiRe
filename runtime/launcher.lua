@@ -15,6 +15,7 @@ local ROOT = "wire"
 local VERSION_FILE = ROOT .. "/shared/version.lua"
 local TEAM_FILE = ROOT .. "/shared/team.lua"
 local COMPONENT_FILE = ROOT .. "/component.cfg"
+local launchArgs = { ... }
 
 local function loadModule(path)
   if not fs.exists(path) then error("Missing WiRe Rewired module: " .. path, 0) end
@@ -72,8 +73,7 @@ local function setupTeam()
 end
 
 local function loadComponent()
-  local args = { ... }
-  local requested = args[1]
+  local requested = launchArgs[1]
   local valid = {
     server = true,
     client = true,
@@ -109,8 +109,8 @@ end
 
 local function checkForUpdate()
   if not http then return nil end
-  local response = http.get(version.versionUrl())
-  if not response then return nil end
+  local ok, response = pcall(http.get, version.versionUrl())
+  if not ok or not response then return nil end
   local remote = trim(response.readAll())
   response.close()
   if remote ~= "" and version.isDifferent(remote) then return remote end
