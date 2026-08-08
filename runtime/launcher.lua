@@ -8,6 +8,7 @@
 --   * Team network namespaces (16 colour servers per team)
 --   * Development-build identification
 --   * Persistent update prompt on launch
+--   * Visible update reminder on the Server monitor
 --   * Shared component registry and storage helpers
 --==============================================================--
 
@@ -164,7 +165,7 @@ local function showUpdatePrompt(remoteVersion, prefs)
         term.setTextColor(colors.white)
         print("Press Enter to continue with the installed version.")
         read()
-        return "continue"
+        return "later"
       end
       print("Update complete. Rebooting into the new build...")
       sleep(2)
@@ -172,14 +173,14 @@ local function showUpdatePrompt(remoteVersion, prefs)
       return "reboot"
 
     elseif choice == "2" then
-      return "continue"
+      return "later"
 
     elseif choice == "3" then
       prefs.mode = "never"
       saveUpdatePrefs(prefs)
       print("Automatic update checks disabled.")
       sleep(1)
-      return "continue"
+      return "never"
     end
   end
 end
@@ -234,13 +235,34 @@ local function installTeamNetworkWrapper(cfg)
   end
 end
 
+local function serverUpdateReminder(remoteVersion)
+  local mon = peripheral.find("monitor")
+  if not mon then return end
+
+  local label = " UPDATE AVAILABLE - SEE COMPUTER "
+  while true do
+    sleep(2)
+    local w = mon.getSize()
+    if w >= #label + 2 then
+      local x = math.max(1, w - #label)
+      mon.setCursorPos(x, 1)
+      mon.setBackgroundColor(colors.red)
+      mon.setTextColor(colors.white)
+      mon.write(label)
+    end
+    sleep(3)
+  end
+end
+
 local component = loadComponent()
 local cfg = setupTeam()
 local updatePrefs = loadUpdatePrefs()
 local updateVersion = checkForUpdate(updatePrefs)
+local updateChoice
 
 if updateVersion then
-  showUpdatePrompt(updateVersion, updatePrefs)
+  updateChoice = showUpdatePrompt(updateVersion, updatePrefs)
+  if updateChoice == "never" then updateVersion = nil end
 end
 
 local target = components.path(component)
@@ -262,7 +284,18 @@ end
 sleep(1)
 
 local restoreNetwork = installTeamNetworkWrapper(cfg)
-local ok, result = pcall(shell.run, target)
+local ok, result
+
+if component == "server" and updateVersion then
+  ok, result = pcall(function()
+    parallel.waitForAny(
+      function() return shell.run(target) end,
+      function() return serverUpdateReminder(updateVersion) end
+    )
+  end)
+else
+  ok, result = pcall(shell.run, target)
+end
 restoreNetwork()
 
 if not ok then
