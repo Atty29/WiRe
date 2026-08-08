@@ -2,7 +2,7 @@
 
 local version = {
   name = "WiRe Rewired",
-  version = "3.4.1-dev",
+  version = "3.4.2-dev",
   channel = "development",
   repoUser = "Atty29",
   repoName = "WiRe",
@@ -17,13 +17,22 @@ function version.versionUrl(cacheBust)
   local url = version.rawBaseUrl() .. "version.txt"
   if cacheBust then
     local stamp
-    if os.epoch then local ok,value=pcall(os.epoch,"utc"); if ok then stamp=value end end
-    stamp=stamp or math.floor((os.time() or 0)*1000)
-    url=url.."?wire_check="..tostring(stamp)
+    if os.epoch then
+      local ok, value = pcall(os.epoch, "utc")
+      if ok then stamp = value end
+    end
+    stamp = stamp or math.floor((os.time() or 0) * 1000)
+    url = url .. "?wire_check=" .. tostring(stamp)
   end
   return url
 end
 
-function version.trim(value) return tostring(value or ""):gsub("^%s+",""):gsub("%s+$","") end
-function version.isDifferent(remoteVersion) return version.trim(remoteVersion)~=version.version end
+function version.trim(value)
+  return tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", "")
+end
+
+function version.isDifferent(remoteVersion)
+  return version.trim(remoteVersion) ~= version.version
+end
+
 return version
