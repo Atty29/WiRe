@@ -9,6 +9,7 @@ local VERSION_FILE = ROOT .. "/shared/version.lua"
 local TEAM_FILE = ROOT .. "/shared/team.lua"
 local STORAGE_FILE = ROOT .. "/shared/storage.lua"
 local COMPONENTS_FILE = ROOT .. "/shared/components.lua"
+local CONFIG_SERVICE_FILE = ROOT .. "/shared/config.lua"
 local COMPONENT_FILE = ROOT .. "/component.cfg"
 local UPDATE_PREFS_FILE = "/data/WiRe/update.cfg"
 local UPDATE_LOG_FILE = "/data/WiRe/update-check.log"
@@ -25,6 +26,7 @@ local version = loadModule(VERSION_FILE)
 local team = loadModule(TEAM_FILE)
 local storage = loadModule(STORAGE_FILE)
 local components = loadModule(COMPONENTS_FILE)
+local configService = loadModule(CONFIG_SERVICE_FILE)
 
 local function logUpdate(text)
   local old = storage.readText(UPDATE_LOG_FILE, "")
@@ -72,6 +74,46 @@ local function loadComponent()
   return component
 end
 
+-- First real adoption of the shared configuration service. Existing Server and
+-- Client config files are normalised before the legacy program starts, while a
+-- missing config is deliberately left alone so the original first-run wizard
+-- still owns initial setup.
+local function preflightLegacyConfig(component)
+  local path, defaults, migrate
+  if component == "server" then
+    path = "/data/WiReServerCfg"
+    defaults = configService.serverDefaults()
+    migrate = configService.migrateServer
+  elseif component == "client" then
+    path = "/data/WiReClientCfg"
+    defaults = configService.clientDefaults()
+    migrate = configService.migrateClient
+  else
+    return true
+  end
+
+  if not fs.exists(path) then return true end
+
+  local cfg, err = configService.load(path, defaults, {
+    requireExisting = true,
+    migrate = migrate,
+    saveMigrated = true,
+  })
+  if not cfg then
+    print("WiRe Rewired config preflight warning: " .. tostring(err))
+    return false
+  end
+
+  -- Persist any newly introduced default fields as well as migrations. The
+  -- format stays the same serialized Lua table used by legacy WiRe.
+  local ok, saveErr = configService.save(path, cfg)
+  if ok == false then
+    print("WiRe Rewired config preflight warning: " .. tostring(saveErr))
+    return false
+  end
+  return true
+end
+
 local function loadUpdatePrefs()
   local prefs=storage.loadTable(UPDATE_PREFS_FILE,{})
   if type(prefs)~="table" then prefs={} end
@@ -88,8 +130,6 @@ local function checkForUpdate(prefs)
   if prefs.mode=="never" then logUpdate("automatic check skipped: preference=never"); return nil end
   if not http then logUpdate("automatic check failed: HTTP API unavailable"); return nil end
 
-  -- Auto-start can run immediately after a computer/chunk loads. Give HTTP a
-  -- moment to settle, then retry transient failures instead of silently giving up.
   sleep(0.75)
   for attempt=1,3 do
     local url=version.versionUrl(true)
@@ -194,6 +234,7 @@ end
 
 local component=loadComponent()
 local cfg=setupTeam()
+preflightLegacyConfig(component)
 local updatePrefs=loadUpdatePrefs()
 local updateVersion=checkForUpdate(updatePrefs)
 local updateChoice
