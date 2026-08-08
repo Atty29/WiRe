@@ -9,6 +9,7 @@
 --   * Development-build identification
 --   * Persistent update prompt on launch
 --   * Visible update reminder on the Server monitor
+--   * Rewired version/team identity on legacy Server/Client terminals
 --   * Shared component registry and storage helpers
 --==============================================================--
 
@@ -235,6 +236,42 @@ local function installTeamNetworkWrapper(cfg)
   end
 end
 
+local function makeHeader(component, cfg)
+  local title = component == "server" and "WiRe Rewired Server" or "WiRe Rewired Client"
+  local teamText = cfg.enabled and ("Team: " .. tostring(cfg.name)) or "Legacy Network"
+  return title .. " " .. version.version .. " | " .. teamText
+end
+
+local function installTerminalIdentityWrapper(component, cfg)
+  if component ~= "server" and component ~= "client" then return function() end end
+
+  local originalWrite = term.write
+  local modernHeader = makeHeader(component, cfg)
+
+  term.write = function(text)
+    local x, y = term.getCursorPos()
+    local raw = tostring(text or "")
+    local isLegacyHeader = y == 1 and (
+      string.find(raw, "WiRe Server ", 1, true) or
+      string.find(raw, "WiRe Client ", 1, true)
+    )
+
+    if not isLegacyHeader then return originalWrite(text) end
+
+    local w = term.getSize()
+    local shown = modernHeader
+    if #shown > w then shown = shown:sub(1, w) end
+    local left = math.max(0, math.floor((w - #shown) / 2))
+    local right = math.max(0, w - left - #shown)
+    term.setCursorPos(1, 1)
+    return originalWrite(string.rep(" ", left) .. shown .. string.rep(" ", right))
+  end
+
+  return function()
+    term.write = originalWrite
+  end
+end
+
 local function serverUpdateReminder(remoteVersion)
   local mon = peripheral.find("monitor")
   if not mon then return end
@@ -284,6 +321,7 @@ end
 sleep(1)
 
 local restoreNetwork = installTeamNetworkWrapper(cfg)
+local restoreTerminal = installTerminalIdentityWrapper(component, cfg)
 local ok, result
 
 if component == "server" and updateVersion then
@@ -296,6 +334,7 @@ if component == "server" and updateVersion then
 else
   ok, result = pcall(shell.run, target)
 end
+restoreTerminal()
 restoreNetwork()
 
 if not ok then
