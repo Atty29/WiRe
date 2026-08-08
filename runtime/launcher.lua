@@ -10,6 +10,7 @@ local TEAM_FILE = ROOT .. "/shared/team.lua"
 local STORAGE_FILE = ROOT .. "/shared/storage.lua"
 local COMPONENTS_FILE = ROOT .. "/shared/components.lua"
 local COMPONENT_CONFIG_FILE = ROOT .. "/shared/component_config.lua"
+local CONFIG_BRIDGE_FILE = ROOT .. "/shared/config_bridge.lua"
 local COMPONENT_FILE = ROOT .. "/component.cfg"
 local UPDATE_PREFS_FILE = "/data/WiRe/update.cfg"
 local UPDATE_LOG_FILE = "/data/WiRe/update-check.log"
@@ -27,6 +28,7 @@ local team = loadModule(TEAM_FILE)
 local storage = loadModule(STORAGE_FILE)
 local components = loadModule(COMPONENTS_FILE)
 local componentConfig = loadModule(COMPONENT_CONFIG_FILE)
+local configBridge = loadModule(CONFIG_BRIDGE_FILE)
 
 local function logUpdate(text)
   local old = storage.readText(UPDATE_LOG_FILE, "")
@@ -221,10 +223,14 @@ term.setBackgroundColor(colors.black); term.setTextColor(colors.white); term.cle
 print(version.name.."  "..version.version); print("DEVELOPMENT BUILD"); print("Component: "..string.upper(component)); print("Network:   "..team.describe(cfg)); print("")
 if not target or not fs.exists(target) then error("Installed component file is missing: "..tostring(component),0) end
 sleep(1)
-local restoreNetwork=installTeamNetworkWrapper(cfg); local restoreTerminal=installTerminalIdentityWrapper(component,cfg); local ok,result
+
+local restoreNetwork=installTeamNetworkWrapper(cfg)
+local restoreTerminal=installTerminalIdentityWrapper(component,cfg)
+local restoreConfigBridge=configBridge.install(component)
+local ok,result
 if component=="server" and updateVersion then
   ok,result=pcall(function() parallel.waitForAny(function() return shell.run(target) end,function() return serverUpdateReminder(updateVersion) end) end)
 else ok,result=pcall(shell.run,target) end
-restoreTerminal(); restoreNetwork()
+restoreConfigBridge(); restoreTerminal(); restoreNetwork()
 if not ok then term.setTextColor(colors.red); print("WiRe Rewired component crashed:\n"..tostring(result)); term.setTextColor(colors.white); error(result,0)
 elseif result==false then term.setTextColor(colors.red); print("WiRe Rewired component returned an error."); term.setTextColor(colors.white) end
