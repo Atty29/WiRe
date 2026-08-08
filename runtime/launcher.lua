@@ -8,12 +8,14 @@
 --   * Team network namespaces (16 colour servers per team)
 --   * Development-build identification
 --   * Non-blocking update notification
---   * One consistent component launcher
+--   * Shared component registry and storage helpers
 --==============================================================--
 
 local ROOT = "wire"
 local VERSION_FILE = ROOT .. "/shared/version.lua"
 local TEAM_FILE = ROOT .. "/shared/team.lua"
+local STORAGE_FILE = ROOT .. "/shared/storage.lua"
+local COMPONENTS_FILE = ROOT .. "/shared/components.lua"
 local COMPONENT_FILE = ROOT .. "/component.cfg"
 local launchArgs = { ... }
 
@@ -26,15 +28,13 @@ end
 
 local version = loadModule(VERSION_FILE)
 local team = loadModule(TEAM_FILE)
-
-local function trim(value)
-  return tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", "")
-end
+local storage = loadModule(STORAGE_FILE)
+local components = loadModule(COMPONENTS_FILE)
 
 local function askYesNo(question, defaultYes)
   while true do
     write(question .. (defaultYes and " [Y/n]: " or " [y/N]: "))
-    local answer = string.lower(trim(read()))
+    local answer = string.lower(storage.trim(read()))
     if answer == "" then return defaultYes end
     if answer == "y" or answer == "yes" then return true end
     if answer == "n" or answer == "no" then return false end
@@ -59,7 +59,7 @@ local function setupTeam()
   local name = team.defaultName
   if enabled then
     write("Team name (use the SAME name on this team's devices): ")
-    name = trim(read())
+    name = storage.trim(read())
     if name == "" then name = team.defaultName end
   end
 
@@ -73,37 +73,23 @@ local function setupTeam()
 end
 
 local function loadComponent()
-  local requested = launchArgs[1]
-  local valid = {
-    server = true,
-    client = true,
-    trigger = true,
-    sensor = true,
-    tablet = true,
-  }
-  if requested and valid[requested] then return requested end
+  local requested = storage.trim(launchArgs[1])
+  if components.isValid(requested) then return requested end
 
-  if fs.exists(COMPONENT_FILE) then
-    local f = fs.open(COMPONENT_FILE, "r")
-    if f then
-      local saved = trim(f.readAll())
-      f.close()
-      if valid[saved] then return saved end
-    end
-  end
+  local saved = storage.trim(storage.readText(COMPONENT_FILE, ""))
+  if components.isValid(saved) then return saved end
 
   term.clear()
   term.setCursorPos(1, 1)
   print("WiRe Rewired component")
-  print("1) Server")
-  print("2) Client")
-  print("3) Trigger")
-  print("4) Sensor")
-  print("5) Tablet")
+  for i = 1, #components.order do
+    local name = components.order[i]
+    print(tostring(i) .. ") " .. components.label(name))
+  end
   write("Select: ")
-  local map = { ["1"] = "server", ["2"] = "client", ["3"] = "trigger", ["4"] = "sensor", ["5"] = "tablet" }
-  local component = map[trim(read())]
-  if not component then error("No valid WiRe component selected.", 0) end
+  local index = tonumber(storage.trim(read()))
+  local component = index and components.order[index] or nil
+  if not components.isValid(component) then error("No valid WiRe component selected.", 0) end
   return component
 end
 
@@ -111,7 +97,7 @@ local function checkForUpdate()
   if not http then return nil end
   local ok, response = pcall(http.get, version.versionUrl())
   if not ok or not response then return nil end
-  local remote = trim(response.readAll())
+  local remote = storage.trim(response.readAll())
   response.close()
   if remote ~= "" and version.isDifferent(remote) then return remote end
   return nil
@@ -167,18 +153,10 @@ local function installTeamNetworkWrapper(cfg)
   end
 end
 
-local function componentPath(component)
-  local flat = ROOT .. "/" .. component .. ".lua"
-  if fs.exists(flat) then return flat end
-  local structured = ROOT .. "/" .. component .. "/main.lua"
-  if fs.exists(structured) then return structured end
-  return nil
-end
-
 local component = loadComponent()
 local cfg = setupTeam()
 local updateVersion = checkForUpdate()
-local target = componentPath(component)
+local target = components.path(component)
 
 term.setBackgroundColor(colors.black)
 term.setTextColor(colors.white)
@@ -196,8 +174,8 @@ if updateVersion then
 end
 print("")
 
-if not target then
-  error("Installed component file is missing: " .. component, 0)
+if not target or not fs.exists(target) then
+  error("Installed component file is missing: " .. tostring(component), 0)
 end
 
 sleep(updateVersion and 2 or 1)
