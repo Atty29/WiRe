@@ -3,7 +3,7 @@
 
 return {
   name = "WiRe Rewired",
-  version = "3.2.1-dev",
+  version = "3.3.0-dev",
   channel = "development",
   branch = "development",
   baseUrl = "https://raw.githubusercontent.com/Atty29/WiRe/development/",
@@ -13,6 +13,7 @@ return {
     { src = "shared/version.lua", dest = "wire/shared/version.lua" },
     { src = "shared/team.lua", dest = "wire/shared/team.lua" },
     { src = "shared/components.lua", dest = "wire/shared/components.lua" },
+    { src = "shared/config.lua", dest = "wire/shared/config.lua" },
     { src = "shared/protocol.lua", dest = "wire/shared/protocol.lua" },
     { src = "shared/crypto.lua", dest = "wire/shared/crypto.lua" },
     { src = "shared/colours.lua", dest = "wire/shared/colours.lua" },
