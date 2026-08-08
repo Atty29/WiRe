@@ -10,10 +10,21 @@ local team = {}
 team.configPath = "/data/WiRe/team.cfg"
 team.defaultName = "DEFAULT"
 
-local function ensureDataDir()
-  if not fs.exists("/data") then fs.makeDir("/data") end
-  if not fs.exists("/data/WiRe") then fs.makeDir("/data/WiRe") end
+local function loadStorage()
+  local paths = {
+    "wire/shared/storage.lua",
+    "shared/storage.lua",
+  }
+  for i = 1, #paths do
+    if fs.exists(paths[i]) then
+      local ok, module = pcall(dofile, paths[i])
+      if ok and type(module) == "table" then return module end
+    end
+  end
+  return nil
 end
+
+local storage = loadStorage()
 
 function team.slugify(value)
   local slug = tostring(value or ""):upper()
@@ -41,6 +52,11 @@ function team.normalise(cfg)
 end
 
 function team.load()
+  if storage and type(storage.loadTable) == "function" then
+    local cfg = storage.loadTable(team.configPath, nil)
+    return cfg and team.normalise(cfg) or nil
+  end
+
   if not fs.exists(team.configPath) then return nil end
   local f = fs.open(team.configPath, "r")
   if not f then return nil end
@@ -52,8 +68,13 @@ function team.load()
 end
 
 function team.save(cfg)
-  ensureDataDir()
   cfg = team.normalise(cfg)
+  if storage and type(storage.saveTable) == "function" then
+    return storage.saveTable(team.configPath, cfg)
+  end
+
+  if not fs.exists("/data") then fs.makeDir("/data") end
+  if not fs.exists("/data/WiRe") then fs.makeDir("/data/WiRe") end
   local f = fs.open(team.configPath, "w")
   if not f then return false, "cannot write " .. team.configPath end
   f.write(textutils.serialize(cfg))
