@@ -123,6 +123,49 @@ local function checkForUpdate(prefs)
   return nil
 end
 
+local function showMonitorUpdatePrompt(remoteVersion)
+  local mon = peripheral.find("monitor")
+  if not mon then return end
+
+  local w, h = mon.getSize()
+  mon.setBackgroundColor(colors.black)
+  mon.setTextColor(colors.white)
+  mon.clear()
+
+  mon.setBackgroundColor(colors.yellow)
+  mon.setTextColor(colors.black)
+  mon.setCursorPos(1, 1)
+  mon.write(string.rep(" ", w))
+
+  local title = "WiRe Rewired Update Available"
+  local titleX = math.max(1, math.floor((w - #title) / 2) + 1)
+  mon.setCursorPos(titleX, 1)
+  mon.write(title:sub(1, w))
+
+  mon.setBackgroundColor(colors.black)
+  mon.setTextColor(colors.white)
+
+  local lines = {
+    "Installed: " .. tostring(version.version),
+    "Available: " .. tostring(remoteVersion),
+    "",
+    "UPDATE AVAILABLE - SEE COMPUTER",
+  }
+
+  local startY = math.max(3, math.floor((h - #lines) / 2))
+  for i = 1, #lines do
+    local text = lines[i]
+    local x = math.max(1, math.floor((w - #text) / 2) + 1)
+    if i == #lines then
+      mon.setTextColor(colors.yellow)
+    else
+      mon.setTextColor(colors.white)
+    end
+    mon.setCursorPos(x, math.min(h, startY + i - 1))
+    mon.write(text:sub(1, w))
+  end
+end
+
 local function showUpdatePrompt(remoteVersion, prefs)
   term.setBackgroundColor(colors.black)
   term.setTextColor(colors.white)
@@ -249,7 +292,7 @@ local function installTerminalIdentityWrapper(component, cfg)
   local modernHeader = makeHeader(component, cfg)
 
   term.write = function(text)
-    local x, y = term.getCursorPos()
+    local _, y = term.getCursorPos()
     local raw = tostring(text or "")
     local isLegacyHeader = y == 1 and (
       string.find(raw, "WiRe Server ", 1, true) or
@@ -298,6 +341,7 @@ local updateVersion = checkForUpdate(updatePrefs)
 local updateChoice
 
 if updateVersion then
+  if component == "server" then showMonitorUpdatePrompt(updateVersion) end
   updateChoice = showUpdatePrompt(updateVersion, updatePrefs)
   if updateChoice == "never" then updateVersion = nil end
 end
