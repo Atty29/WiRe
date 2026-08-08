@@ -19,8 +19,10 @@ return {
     { src = "shared/ui.lua", dest = "wire/shared/ui.lua" },
     { src = "tools/update.lua", dest = "wire/tools/update.lua" },
     { src = "tools/team.lua", dest = "wire/tools/team.lua" },
+    { src = "tools/selftest.lua", dest = "wire/tools/selftest.lua" },
     { src = "version.txt", dest = "wire/version.txt" },
     { src = "README.md", dest = "wire/README.md" },
+    { src = "docs/TESTING.md", dest = "wire/TESTING.md" },
   },
 
   packages = {
