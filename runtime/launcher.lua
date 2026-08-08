@@ -7,7 +7,7 @@
 -- working discovery/encryption code:
 --   * Team network namespaces (16 colour servers per team)
 --   * Development-build identification
---   * Non-blocking update notification
+--   * Persistent update prompt on launch
 --   * Shared component registry and storage helpers
 --==============================================================--
 
@@ -17,6 +17,7 @@ local TEAM_FILE = ROOT .. "/shared/team.lua"
 local STORAGE_FILE = ROOT .. "/shared/storage.lua"
 local COMPONENTS_FILE = ROOT .. "/shared/components.lua"
 local COMPONENT_FILE = ROOT .. "/component.cfg"
+local UPDATE_PREFS_FILE = "/data/WiRe/update.cfg"
 local launchArgs = { ... }
 
 local function loadModule(path)
@@ -93,14 +94,93 @@ local function loadComponent()
   return component
 end
 
-local function checkForUpdate()
-  if not http then return nil end
+local function loadUpdatePrefs()
+  local prefs = storage.loadTable(UPDATE_PREFS_FILE, {})
+  if type(prefs) ~= "table" then prefs = {} end
+  if prefs.mode ~= "never" then prefs.mode = "prompt" end
+  return prefs
+end
+
+local function saveUpdatePrefs(prefs)
+  local ok, err = storage.saveTable(UPDATE_PREFS_FILE, prefs)
+  if ok == false then
+    term.setTextColor(colors.red)
+    print("Could not save update preference: " .. tostring(err))
+    term.setTextColor(colors.white)
+  end
+end
+
+local function checkForUpdate(prefs)
+  if prefs.mode == "never" or not http then return nil end
   local ok, response = pcall(http.get, version.versionUrl())
   if not ok or not response then return nil end
   local remote = storage.trim(response.readAll())
   response.close()
   if remote ~= "" and version.isDifferent(remote) then return remote end
   return nil
+end
+
+local function showUpdatePrompt(remoteVersion, prefs)
+  term.setBackgroundColor(colors.black)
+  term.setTextColor(colors.white)
+  term.clear()
+  term.setCursorPos(1, 1)
+
+  term.setBackgroundColor(colors.yellow)
+  term.setTextColor(colors.black)
+  local w = term.getSize()
+  term.write(string.rep(" ", w))
+  term.setCursorPos(2, 1)
+  term.write("WiRe Rewired Update Available")
+
+  term.setBackgroundColor(colors.black)
+  term.setTextColor(colors.white)
+  term.setCursorPos(1, 3)
+  print("Installed: " .. version.version)
+  print("Available: " .. tostring(remoteVersion))
+  print("")
+  print("1) UPDATE NOW")
+  print("2) LATER - ask again next time WiRe starts")
+  print("3) NEVER - stop automatic update checks")
+  print("")
+  term.setTextColor(colors.lightGray)
+  print("Manual updates will still work if automatic checks are disabled.")
+  term.setTextColor(colors.white)
+  print("")
+
+  while true do
+    write("Select 1, 2 or 3: ")
+    local choice = storage.trim(read())
+
+    if choice == "1" then
+      term.setTextColor(colors.yellow)
+      print("Starting updater...")
+      term.setTextColor(colors.white)
+      local ok = shell.run(ROOT .. "/tools/update.lua")
+      if ok == false then
+        term.setTextColor(colors.red)
+        print("Update did not complete successfully.")
+        term.setTextColor(colors.white)
+        print("Press Enter to continue with the installed version.")
+        read()
+        return "continue"
+      end
+      print("Update complete. Rebooting into the new build...")
+      sleep(2)
+      os.reboot()
+      return "reboot"
+
+    elseif choice == "2" then
+      return "continue"
+
+    elseif choice == "3" then
+      prefs.mode = "never"
+      saveUpdatePrefs(prefs)
+      print("Automatic update checks disabled.")
+      sleep(1)
+      return "continue"
+    end
+  end
 end
 
 local function installTeamNetworkWrapper(cfg)
@@ -155,7 +235,13 @@ end
 
 local component = loadComponent()
 local cfg = setupTeam()
-local updateVersion = checkForUpdate()
+local updatePrefs = loadUpdatePrefs()
+local updateVersion = checkForUpdate(updatePrefs)
+
+if updateVersion then
+  showUpdatePrompt(updateVersion, updatePrefs)
+end
+
 local target = components.path(component)
 
 term.setBackgroundColor(colors.black)
@@ -166,19 +252,13 @@ print(version.name .. "  " .. version.version)
 print("DEVELOPMENT BUILD")
 print("Component: " .. string.upper(component))
 print("Network:   " .. team.describe(cfg))
-if updateVersion then
-  term.setTextColor(colors.yellow)
-  print("Update available: " .. updateVersion)
-  print("Run: wire/tools/update.lua")
-  term.setTextColor(colors.white)
-end
 print("")
 
 if not target or not fs.exists(target) then
   error("Installed component file is missing: " .. tostring(component), 0)
 end
 
-sleep(updateVersion and 2 or 1)
+sleep(1)
 
 local restoreNetwork = installTeamNetworkWrapper(cfg)
 local ok, result = pcall(shell.run, target)
