@@ -6,6 +6,7 @@ local required = {
   "wire/shared/version.lua",
   "wire/shared/team.lua",
   "wire/shared/components.lua",
+  "wire/shared/config.lua",
   "wire/shared/protocol.lua",
   "wire/shared/storage.lua",
   "wire/tools/update.lua",
@@ -38,6 +39,19 @@ allOk = result(okStorage and type(storage) == "table" and type(storage.readText)
 
 local okComponents, components = pcall(dofile, "wire/shared/components.lua")
 allOk = result(okComponents and type(components) == "table" and type(components.isValid) == "function", "component registry loads") and allOk
+
+local okConfig, config = pcall(dofile, "wire/shared/config.lua")
+allOk = result(okConfig and type(config) == "table" and type(config.mergeDefaults) == "function", "configuration service loads") and allOk
+
+if okConfig and type(config) == "table" then
+  local defaults = config.clientDefaults()
+  local sample = { name = "Test Device", color = "Light Blue", getFix = false, deviceType = "Bridge" }
+  local merged = config.mergeDefaults(config.clone(sample), defaults)
+  local migrated, changed = config.migrateClient(merged)
+
+  allOk = result(migrated.name == "Test Device" and migrated.side == "top", "config defaults preserve existing values") and allOk
+  allOk = result(changed == true and migrated.color == "Sky" and migrated.getGPSFix == false and migrated.deviceType == "Energy", "legacy client migration is compatible") and allOk
+end
 
 local component
 if okStorage and okComponents then
