@@ -14,10 +14,22 @@
 --  • Group Management                                           --
 --  • Search & Sorting                                           --
 --  • Security System                                            --
---  • Tablet Support (Planned)                                   --
+--  • Tablet Support                                             --
 --  • Ongoing Community Development                              --
 --==============================================================--
 local WiReSver = "3.0.2 Community Manager"
+-- Use package identity when installed, retaining the standalone version fallback.
+do
+  for _, path in ipairs({ "wire/shared/version.lua", "shared/version.lua" }) do
+    if fs.exists(path) then
+      local ok, package = pcall(dofile, path)
+      if ok and type(package) == "table" and type(package.version) == "string" then
+        WiReSver = package.version
+        break
+      end
+    end
+  end
+end
 --[[
 Tested with/requires:
   - Minecraft 1.6.4+
@@ -1735,12 +1747,15 @@ end
 
 --# WiRe Server+ group helpers
 findClientByName = function(name)
+  local found, index
   for i = 1, #allClients do
     if allClients[i].name == name then
-      return allClients[i], i
+      -- Keep both devices visible, but never guess which duplicate a group means.
+      if found then return nil, nil end
+      found, index = allClients[i], i
     end
   end
-  return nil, nil
+  return found, index
 end
 
 local function ensureWireDataDirs()
@@ -1855,7 +1870,15 @@ local function sendServerInfo(targetId)
 end
 
 sendCommandToClient = function(targetClient, command)
-  if not targetClient or not targetClient.cc or not validStates[command] then return false end
+  if not targetClient or not targetClient.cc then return false end
+  if command == "CLOSE" then command = "CLOSED" end
+  if command == "TOGGLE" then
+    if targetClient.lockState then return false end
+    local opposite = { OPEN = "CLOSED", CLOSED = "OPEN", ON = "OFF", OFF = "ON" }
+    command = opposite[targetClient.deviceState]
+  end
+  if command ~= "OPEN" and command ~= "CLOSED" and command ~= "ON" and command ~= "OFF"
+      and command ~= "LOCKED" and command ~= "UNLOCK" and command ~= "WiReQRY" then return false end
   local oldClient, oldCommand = client, thisCommand
   client = targetClient.cc
   thisCommand = command
@@ -2238,6 +2261,14 @@ do
       for i = 1, clientCount do
         if client == allClients[i].cc then             --# client is already on the list
           thisCommand = "WiReQRY"
+          -- A renamed client must release its old name without a server restart.
+          if newDeviceData.name ~= allClients[i].name then
+            allClients[i].name = newDeviceData.name
+            ccUpdate = true
+          end
+          allClients[i].deviceType = newDeviceData.deviceType
+          allClients[i].note = newDeviceData.note
+          allClients[i].loc = newDeviceData.loc
           if newDeviceData.deviceState ~= allClients[i].deviceState then
             thisCommand = newDeviceData.deviceState
             allClients[i].deviceState = thisCommand
@@ -2309,11 +2340,15 @@ do
                       break
                     end
                   end
-                else
+                  ccSuccess = true
+                elseif type(newCmdData.name) == "string" and newCmdData.name ~= ""
+                    and (newCmdData.deviceState == "OPEN" or newCmdData.deviceState == "CLOSED"
+                      or newCmdData.deviceState == "ON" or newCmdData.deviceState == "OFF")
+                    and type(newCmdData.loc) == "table" and type(newCmdData.lockState) == "boolean" then
                   sortDeviceList(newCmdData)
+                  ccSuccess = true
                 end
-                ccSuccess = true
-              elseif newCmdData.program == "WiReTrigger" then
+              elseif newCmdData.program == "WiReTrigger" or newCmdData.program == "WiReTablet" then
                 --# Hidden trigger packet. This does NOT add the trigger to the visible client list.
                 --# Supported trigger actions:
                 --#   request="LISTGROUPS"   -> replies with all saved group names
@@ -2323,27 +2358,47 @@ do
                 local request = type(newCmdData.request) == "string" and string.upper(newCmdData.request) or nil
                 if request == "LISTGROUPS" then
                   ccSuccess = sendGroupList(id)
-                elseif request == "LISTDEVICES" then
-                ccSuccess = sendDeviceList(id)
+                elseif request == "LISTDEVICES" or request == "DEVICE_LIST" then
+                  ccSuccess = sendDeviceList(id)
                 elseif request == "SERVERINFO" then
-                ccSuccess = sendServerInfo(id)
+                  ccSuccess = sendServerInfo(id)
                 else
                   local triggered = false
-                  if type(newCmdData.groups) == "table" then
-                    for g = 1, #newCmdData.groups do
-                      local ok = activateGroup(newCmdData.groups[g])
-                      triggered = ok or triggered
+                  local err = "Unknown request or target"
+                  if request == nil or request == "COMMAND_GROUP" or request == "COMMAND_DEVICE" then
+                    if type(newCmdData.groups) == "table" and request ~= "COMMAND_DEVICE" then
+                      for g = 1, #newCmdData.groups do
+                        if type(newCmdData.groups[g]) == "string" then
+                          local ok = activateGroup(newCmdData.groups[g])
+                          triggered = ok or triggered
+                        end
+                      end
+                    elseif type(newCmdData.group) == "string" and request ~= "COMMAND_DEVICE" then
+                      -- Older Sensor configurations supplied action here; groups
+                      -- always execute their saved actions, as legacy Triggers do.
+                      triggered = activateGroup(newCmdData.group)
+                    elseif type(newCmdData.device) == "string" and type(newCmdData.cmd) == "string"
+                        and request ~= "COMMAND_GROUP" then
+                      local target = findClientByName(newCmdData.device)
+                      if target then
+                        local command = newCmdData.cmd
+                        -- Tablet's ON/OFF menu means OPEN/CLOSED for door devices.
+                        if newCmdData.program == "WiReTablet" and target.deviceType ~= "Energy" then
+                          if command == "ON" then command = "OPEN" end
+                          if command == "OFF" then command = "CLOSED" end
+                        end
+                        triggered = sendCommandToClient(target, command)
+                        err = "Invalid command, locked toggle, or unknown device state"
+                      else
+                        err = "Unknown or duplicate device name; rename duplicate clients"
+                      end
                     end
-elseif type(newCmdData.group) == "string" then
-  triggered = activateGroup(newCmdData.group)
-
-elseif type(newCmdData.device) == "string" and type(newCmdData.cmd) == "string" then
-  local target = findClientByName(newCmdData.device)
-  if target then
-    triggered = sendCommandToClient(target, newCmdData.cmd)
-  end
-end
+                  end
                   ccSuccess = triggered
+                  if newCmdData.program == "WiReTablet" then
+                    sendTriggerResponse(id, { response = "COMMAND_RESULT", ok = triggered,
+                      error = not triggered and err or nil })
+                  end
                 end
               end
             end

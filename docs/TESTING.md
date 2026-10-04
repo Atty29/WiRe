@@ -154,3 +154,42 @@ For any failure, record:
 - What action caused it
 
 Do not merge `development` into `main` until the core Server/Client/Trigger paths pass real in-game testing.
+
+## Repair regression suite
+
+From the repository root, install the host-only test dependency and run:
+
+```text
+python -m pip install lupa==2.8
+python tests/run.py
+```
+
+The suite compiles every Lua file using Lua 5.2, executes production dispatcher and
+reply functions with simulated ComputerCraft APIs, tests the actual team wrapper,
+and checks real encryption round trips between the Server and all components.
+It also exercises configuration migration and the Client config bridge against
+an in-memory filesystem. It never operates live redstone.
+
+Before merging this repair into a release, test in Minecraft/CC:Tweaked:
+
+- Put two teams on Purple. Trigger/Sensor/Tablet must discover and read only their
+  team's Server; repeat with team isolation disabled for a legacy installation.
+- Exercise Sensor OPEN, CLOSE, ON, OFF and TOGGLE against Door, eDoor, Piston and
+  Energy clients. Toggle uses the latest reported state; allow a client reply
+  between toggles. Locked devices must retain their existing lock behaviour.
+- Configure a Sensor group level: it should run the group's stored actions.
+  Older configurations with a group `action` still run the saved group as before.
+- Pair Tablet, refresh both lists, search devices, run a group, and command both
+  a door and an Energy client. Door menu ON/OFF means OPEN/CLOSED. Confirm errors
+  for a missing target or invalid command. Acknowledgements mean the Server sent
+  the command, not that a remote client confirmed physical completion.
+- Give two clients the same name. Both remain visible; named commands/groups must
+  not choose one arbitrarily. Rename one and wait for its next report; named
+  control should recover. Confirm each monitor control still selects by ID.
+- Restart a Client with legacy Light Blue/Light Gray and getFix settings; confirm
+  migration and subsequent configuration saves work without recursion.
+- Run `wire/tools/selftest.lua` after installation. It checks package versions,
+  team mapping and required files offline; it does not prove live networking.
+
+The host tests are automated regression evidence, not a substitute for these
+hardware and UI checks. No live Minecraft testing was performed for this repair.

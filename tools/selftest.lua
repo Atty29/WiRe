@@ -7,6 +7,8 @@ local required = {
   "wire/shared/team.lua",
   "wire/shared/components.lua",
   "wire/shared/config.lua",
+  "wire/shared/component_config.lua",
+  "wire/shared/config_bridge.lua",
   "wire/shared/protocol.lua",
   "wire/shared/storage.lua",
   "wire/tools/update.lua",
@@ -71,11 +73,27 @@ end
 
 local okVersion, version = pcall(dofile, "wire/shared/version.lua")
 allOk = result(okVersion and type(version) == "table" and version.version ~= nil, "version module loads") and allOk
-if okVersion and type(version) == "table" then print("       version " .. tostring(version.version)) end
+if okVersion and type(version) == "table" then
+  print("       version " .. tostring(version.version))
+  local okProtocol, protocol = pcall(dofile, "wire/shared/protocol.lua")
+  allOk = result(okProtocol and type(protocol) == "table" and protocol.version == version.version,
+    "protocol metadata matches package version") and allOk
+  if okStorage and type(storage) == "table" then
+    allOk = result(storage.trim(storage.readText("wire/version.txt", "")) == version.version,
+      "version.txt matches package version") and allOk
+  end
+end
 
 local okTeam, team = pcall(dofile, "wire/shared/team.lua")
 allOk = result(okTeam and type(team) == "table" and type(team.protocol) == "function", "team module loads") and allOk
 if okTeam and type(team) == "table" then
+  local alpha = team.protocol({ enabled = true, slug = "ALPHA" }, "WiRePurple")
+  local bravo = team.protocol({ enabled = true, slug = "BRAVO" }, "WiRePurple")
+  allOk = result(alpha == "WiReRewired:ALPHA:WiRePurple" and alpha ~= bravo,
+    "teams isolate the same colour") and allOk
+  allOk = result(team.protocol({ enabled = false }, "WiRePurple") == "WiRePurple"
+    and team.protocol({ enabled = true, slug = "ALPHA" }, "gps") == "gps",
+    "legacy and non-WiRe protocols preserved") and allOk
   local cfg = team.load()
   if cfg then
     print("       " .. team.describe(cfg))
@@ -115,7 +133,8 @@ end
 print("")
 if allOk then
   term.setTextColor(colors.green)
-  print("Installation structure looks good.")
+  print("Installation and offline checks passed.")
+  print("Live networking/redstone has not been tested.")
   print("Next: run the launcher and perform the in-game tests.")
 else
   term.setTextColor(colors.red)

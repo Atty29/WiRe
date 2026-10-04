@@ -2,6 +2,7 @@
 -- Small, reusable helpers for configuration files outside the legacy programs.
 
 local storage = {}
+local openFile = fs.open
 
 local function ensureParent(path)
   local dir = fs.getDir(path)
@@ -10,7 +11,7 @@ end
 
 function storage.readText(path, fallback)
   if not fs.exists(path) then return fallback end
-  local f = fs.open(path, "r")
+  local f = openFile(path, "r")
   if not f then return fallback end
   local raw = f.readAll()
   f.close()
@@ -19,7 +20,7 @@ end
 
 function storage.writeText(path, value)
   ensureParent(path)
-  local f = fs.open(path, "w")
+  local f = openFile(path, "w")
   if not f then return false, "cannot write " .. tostring(path) end
   f.write(tostring(value or ""))
   f.close()

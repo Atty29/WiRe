@@ -7,6 +7,18 @@
 --==============================================================--
 
 local WiReTver = "0.4.0-dev"
+-- Use package identity when installed, retaining the standalone version fallback.
+do
+  for _, path in ipairs({ "wire/shared/version.lua", "shared/version.lua" }) do
+    if fs.exists(path) then
+      local ok, package = pcall(dofile, path)
+      if ok and type(package) == "table" and type(package.version) == "string" then
+        WiReTver = package.version
+        break
+      end
+    end
+  end
+end
 local configFile = "/wire/tablet.cfg"
 local thisCC = os.getComputerID()
 local serverId, network, serverColour, serverName
@@ -1185,17 +1197,28 @@ end
 local function request(payload, timeout)
   local ok, err = sendPacket(payload)
   if not ok then return nil, err end
-  local id, encryptedMessage = rednet.receive(network, timeout or 3)
-  if not id then return nil, "timeout" end
-  if id ~= serverId or type(encryptedMessage) ~= "string" then return nil, "bad sender" end
-  local okDecode, decoded = pcall(decode, encryptedMessage)
-  if not okDecode or type(decoded) ~= "string" then return nil, "decode failed" end
-  local encKey = tostring(thisCC) .. "WiRe!Comms" .. tostring(serverId)
-  local okDec, plain = pcall(decrypt, encKey, decoded)
-  if not okDec or type(plain) ~= "string" then return nil, "decrypt failed" end
-  local okUn, packet = pcall(textutils.unserialize, plain)
-  if not okUn or type(packet) ~= "table" then return nil, "bad packet" end
-  return packet
+  local expected = ({ SERVERINFO = "SERVERINFO", LISTDEVICES = "DEVICELIST",
+    LISTGROUPS = "GROUPLIST", COMMAND_DEVICE = "COMMAND_RESULT", COMMAND_GROUP = "COMMAND_RESULT" })[payload.request]
+  local deadline = os.clock() + (timeout or 3)
+  while os.clock() < deadline do
+    local id, encryptedMessage = rednet.receive(network, math.max(0, deadline - os.clock()))
+    if not id then break end
+    if id == serverId and type(encryptedMessage) == "string" then
+      local okDecode, decoded = pcall(decode, encryptedMessage)
+      if okDecode and type(decoded) == "string" then
+        local encKey = tostring(thisCC) .. "WiRe!Comms" .. tostring(serverId)
+        local okDec, plain = pcall(decrypt, encKey, decoded)
+        if okDec and type(plain) == "string" then
+          local okUn, packet = pcall(textutils.unserialize, plain)
+          if okUn and type(packet) == "table" and packet.program == "WiReServer"
+              and packet.cc == id and packet.color == serverColour and packet.response == expected then
+            return packet
+          end
+        end
+      end
+    end
+  end
+  return nil, "timeout"
 end
 
 local function pairSetup()
@@ -1232,7 +1255,7 @@ local function pairSetup()
 end
 
 local function refreshDevices()
-  local packet, err = request({ request = "DEVICE_LIST", search = searchText }, 5)
+  local packet, err = request({ request = "LISTDEVICES", search = searchText }, 5)
   if packet and packet.devices then
     deviceCache = packet.devices
     serverName = packet.serverName or serverName
