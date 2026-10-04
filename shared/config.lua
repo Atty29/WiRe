@@ -6,6 +6,7 @@
 -- data format.
 
 local config = {}
+local openFile = fs.open
 
 local function tryLoadStorage()
   local candidates = {
@@ -50,7 +51,7 @@ end
 
 local function fallbackLoad(path)
   if not fs.exists(path) then return nil, "missing" end
-  local f = fs.open(path, "r")
+  local f = openFile(path, "r")
   if not f then return nil, "cannot open " .. path end
   local raw = f.readAll()
   f.close()
@@ -61,7 +62,7 @@ end
 
 local function fallbackSave(path, value)
   ensureParent(path)
-  local f = fs.open(path, "w")
+  local f = openFile(path, "w")
   if not f then return false, "cannot write " .. path end
   f.write(textutils.serialize(value))
   f.close()
@@ -93,16 +94,18 @@ function config.load(path, defaults, options)
   end
 
   if type(value) ~= "table" then return nil, "configuration is not a table" end
-  value = mergeMissing(value, defaults or {})
+  local migrationChanged = false
 
   if type(options.migrate) == "function" then
     local ok, migrated, changed = pcall(options.migrate, value)
     if not ok then return nil, "migration failed: " .. tostring(migrated) end
     if type(migrated) == "table" then value = migrated end
-    if changed and options.saveMigrated ~= false then
-      local saveOk, saveErr = config.save(path, value)
-      if not saveOk then return nil, saveErr end
-    end
+    migrationChanged = changed
+  end
+  value = mergeMissing(value, defaults or {})
+  if migrationChanged and options.saveMigrated ~= false then
+    local saveOk, saveErr = config.save(path, value)
+    if not saveOk then return nil, saveErr end
   end
 
   return value

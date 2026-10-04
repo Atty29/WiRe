@@ -18,6 +18,18 @@
 ---------------------------------------------------------]]--
 
 local VERSION = "0.1.5-dev"
+-- Use package identity when installed, retaining the standalone version fallback.
+do
+  for _, path in ipairs({ "wire/shared/version.lua", "shared/version.lua" }) do
+    if fs.exists(path) then
+      local ok, package = pcall(dofile, path)
+      if ok and type(package) == "table" and type(package.version) == "string" then
+        VERSION = package.version
+        break
+      end
+    end
+  end
+end
 local CONFIG = "/data/WiRe/sensor.cfg"
 local DISCOVERY_TIMEOUT = 5
 local thisCC = tostring(os.getComputerID())
@@ -1085,7 +1097,6 @@ end
 
 -- =========================================================
 -- WiRe Sensor Program
--- Version: 0.1.0-dev
 -- =========================================================
 -- Reads local redstone or an Advanced Peripherals Redstone
 -- Integrator and fires WiRe actions when signal level changes.
@@ -1094,11 +1105,7 @@ end
 -- WiRe Trigger so it uses the same WiRe colour/server flow.
 -- =========================================================
 
-local VERSION = "0.1.0-dev"
-local CONFIG = "/data/WiRe/sensor.cfg"
-local DISCOVERY_TIMEOUT = 5
 local POLL_TIME = 0.10
-local thisCC = tostring(os.getComputerID())
 
 local cfg, modemSide = nil, nil
 
@@ -1109,7 +1116,7 @@ local colorWheel = {
 }
 
 local sides = {"front","back","left","right","top","bottom"}
-local actions = {"open","close","toggle","on","off","run"}
+local actions = {"open","close","toggle","on","off"}
 
 local function clear()
   term.setBackgroundColor(colors.black)
@@ -1215,31 +1222,28 @@ end
 
 local function waitForEncryptedResponse(expectedResponse, timeout)
   updateNetwork()
-  local timer = os.startTimer(timeout or DISCOVERY_TIMEOUT)
-  while true do
-    local event, p1, p2, p3 = os.pullEvent()
-    if event == "rednet_message" then
-      local sender, message, protocol = p1, p2, p3
-      if protocol == network and type(message) == "string" then
-        local ok, decoded = pcall(decode, message)
-        if ok and type(decoded) == "string" then
-          local encKey = thisCC .. "WiRe!Comms" .. tostring(sender)
-          local ok2, plain = pcall(decrypt, encKey, decoded)
-          if ok2 and type(plain) == "string" then
-            local ok3, data = pcall(textutils.unserialize, plain)
-            if ok3 and type(data) == "table" then
-              if data.color == cfg.color and data.response == expectedResponse then
-                data.sender = sender
-                return data
-              end
-            end
+  local deadline = os.clock() + (timeout or DISCOVERY_TIMEOUT)
+  while os.clock() < deadline do
+    -- Use the launcher's team-aware receive path, including in legacy mode.
+    local sender, message = rednet.receive(network, math.max(0, deadline - os.clock()))
+    if not sender then return nil end
+    if sender == cfg.server and type(message) == "string" then
+      local ok, decoded = pcall(decode, message)
+      if ok and type(decoded) == "string" then
+        local encKey = thisCC .. "WiRe!Comms" .. tostring(sender)
+        local ok2, plain = pcall(decrypt, encKey, decoded)
+        if ok2 and type(plain) == "string" then
+          local ok3, data = pcall(textutils.unserialize, plain)
+          if ok3 and type(data) == "table" and data.program == "WiReServer"
+              and data.cc == sender and data.color == cfg.color and data.response == expectedResponse then
+            data.sender = sender
+            return data
           end
         end
       end
-    elseif event == "timer" and p1 == timer then
-      return nil
     end
   end
+  return nil
 end
 
 local function discoverServer()
@@ -1338,7 +1342,7 @@ end
 
 local function sendDeviceAction(deviceId, action)
   -- Server-side device actions expect cmd, matching normal WiRe commands.
-  sendEncrypted({ device = deviceId, cmd = string.upper(tostring(action or "")) }, cfg.server)
+  sendEncrypted({ device = deviceId, cmd = action == "close" and "CLOSED" or string.upper(tostring(action or "")) }, cfg.server)
 end
 
 local function chooseFromList(title, list)
@@ -1491,7 +1495,7 @@ local function configureLevel(level)
     end
 
     if target then
-      local action = chooseAction()
+      local action = targetType == "group" and "run" or chooseAction()
       cfg.events[level] = {
         targetType = targetType,
         target = target.id,

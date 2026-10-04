@@ -7,13 +7,14 @@
 local protocol = {
   name = "WiRe",
   product = "WiRe Rewired",
-  version = "3.1.0-dev",
+  version = "3.4.2-dev",
   channel = "development",
 }
 
 protocol.programs = {
   device = "WiRe",
   trigger = "WiReTrigger",
+  tablet = "WiReTablet",
   server = "WiReServer",
 }
 

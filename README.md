@@ -153,3 +153,18 @@ Current priorities are:
 ## Licence and Credits
 
 See `LICENSE` for the repository's current notice. The original WiRe credits must remain in the legacy and derived working source files.
+
+## Development repair notes
+
+Trigger and Sensor replies now use the team-aware receive path. Tablet discovery,
+device/group lists and commands are handled by the Server, including command
+acknowledgements. Existing Server/Client packet fields and encryption are preserved.
+
+Sensor `close` sends `CLOSED`; `toggle` selects the opposite of the Server's last
+reported device state. Group targets execute their saved actions. Duplicate client
+names remain visible, but name-based commands and group actions skip ambiguous
+names until a client is renamed. Direct monitor control still uses computer IDs.
+
+Configuration migration now runs before defaults, and Client configuration reads
+and writes no longer recurse through the configuration bridge. See
+[testing](docs/TESTING.md) for automated checks and the in-game release gate.
